@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>S022 — variant 2 · dual gauges</title>
+<style>
+  :root {
+    --bg:           #0A0A0A;
+    --bg-panel:     #111111;
+    --bg-elevated:  #161616;
+    --fg:           #E6E6E6;
+    --fg-dim:       #9A9A9A;
+    --muted:        #6B6B6B;
+    --border:       #2A2A2A;
+    --border-strong:#3A3A3A;
+    --accent:       #FF6A00;
+    --accent-dim:   #B24A00;
+    --font-mono:    "Fira Code", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+    --font-display: "Berkeley Mono", "JetBrains Mono", ui-monospace, monospace;
+    --space-1: 0.25rem;
+    --space-2: 0.5rem;
+    --space-3: 0.75rem;
+    --space-4: 1rem;
+    --space-5: 1.5rem;
+    --motion-fast: 120ms;
+    --motion-base: 200ms;
+    --easing: cubic-bezier(0.2, 0.8, 0.2, 1);
+    font-variant-numeric: tabular-nums lining-nums;
+  }
+  html, body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-mono);
+    font-size: 14px;
+    line-height: 1.45;
+    margin: 0;
+    padding: var(--space-5);
+  }
+  .variant-header {
+    color: var(--muted);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    margin-bottom: var(--space-5);
+    border-bottom: 1px dotted var(--border);
+    padding-bottom: var(--space-3);
+  }
+  .variant-header em { color: var(--accent); font-style: normal; }
+  .stage { max-width: 480px; }
+
+  /* ---- component ---- */
+  .split {
+    position: relative;
+    border: 1px solid var(--border);
+    background: var(--bg-panel);
+    padding: var(--space-5);
+  }
+  .head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-4);
+    margin-bottom: var(--space-5);
+  }
+  .title {
+    margin: 0;
+    font-size: 12px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  .title .glyph { color: var(--accent); font-size: 0.65em; }
+  .totals { font-size: 12px; color: var(--fg-dim); }
+  .totals strong { color: var(--fg); font-weight: 600; }
+
+  .gauges {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-4);
+  }
+  .gauge {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: var(--space-3) var(--space-2) var(--space-2);
+    border: 1px solid var(--border);
+    background: var(--bg);
+    transition: background var(--motion-fast) var(--easing);
+  }
+  .gauge:hover { background: var(--bg-elevated); }
+  .gauge .ring { width: 100%; height: auto; max-width: 120px; display: block; }
+  .ring .track { fill: none; stroke: var(--border-strong); stroke-width: 8; }
+  .ring .arc {
+    fill: none;
+    stroke-width: 8;
+    stroke-linecap: butt;
+    transform: rotate(-90deg);
+    transform-origin: 60px 60px;
+    transition: stroke-dashoffset var(--motion-base) var(--easing);
+  }
+  .ring.work     .arc { stroke: var(--accent); }
+  .ring.personal .arc { stroke: var(--accent-dim); }
+
+  /* center label inside the ring */
+  .ring text { font-family: var(--font-display); font-variant-numeric: tabular-nums lining-nums; }
+  .ring .big {
+    font-size: 30px;
+    letter-spacing: -0.02em;
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .ring.work     .big { fill: var(--accent); }
+  .ring.personal .big { fill: var(--accent-dim); }
+  .ring .small {
+    font-size: 9px;
+    fill: var(--muted);
+    text-anchor: middle;
+    letter-spacing: 0.1em;
+  }
+
+  .gauge .meta {
+    margin-top: var(--space-2);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+  }
+  .gauge .meta-label {
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+  }
+  .gauge .meta-pct {
+    font-size: 12px;
+    color: var(--fg);
+    font-weight: 600;
+  }
+
+  .footer {
+    margin-top: var(--space-4);
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--muted);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    display: flex;
+    justify-content: space-between;
+  }
+  .footer .num { color: var(--accent); font-weight: 600; }
+</style>
+</head>
+<body>
+<header class="variant-header">VARIANT 2 · <em>DUAL GAUGES</em> — two SVG rings, big mono counts inside</header>
+
+<div class="stage">
+  <section class="split" aria-label="Project split: work vs personal">
+    <div class="head">
+      <h2 class="title"><span class="glyph" aria-hidden="true">◆</span> PROJECTS</h2>
+      <div class="totals"><strong>33</strong> total</div>
+    </div>
+
+    <div class="gauges">
+      <!-- WORK gauge -->
+      <div class="gauge" title="work — 26 projects (78.8%)">
+        <svg class="ring work" viewBox="0 0 120 120" role="img" aria-label="Work: 26 of 33 (78.8%)">
+          <circle class="track" cx="60" cy="60" r="48" />
+          <!-- circumference = 2 * pi * 48 = 301.59. work share = 26/33 = 78.79%.
+               arc length = 237.66, offset = 301.59 - 237.66 = 63.93 -->
+          <circle class="arc" cx="60" cy="60" r="48"
+                  stroke-dasharray="301.593" stroke-dashoffset="63.928" />
+          <text class="big"   x="60" y="58">26</text>
+          <text class="small" x="60" y="80">OF 33</text>
+        </svg>
+        <div class="meta">
+          <span class="meta-label">work</span>
+          <span class="meta-pct">78.8%</span>
+        </div>
+      </div>
+
+      <!-- PERSONAL gauge -->
+      <div class="gauge" title="personal — 7 projects (21.2%)">
+        <svg class="ring personal" viewBox="0 0 120 120" role="img" aria-label="Personal: 7 of 33 (21.2%)">
+          <circle class="track" cx="60" cy="60" r="48" />
+          <!-- personal share = 7/33 = 21.21%. arc length = 63.93, offset = 237.66 -->
+          <circle class="arc" cx="60" cy="60" r="48"
+                  stroke-dasharray="301.593" stroke-dashoffset="237.666" />
+          <text class="big"   x="60" y="58">7</text>
+          <text class="small" x="60" y="80">OF 33</text>
+        </svg>
+        <div class="meta">
+          <span class="meta-label">personal</span>
+          <span class="meta-pct">21.2%</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer">
+      <span>total projects</span><span class="num">33</span>
+    </div>
+  </section>
+</div>
+</body>
+</html>

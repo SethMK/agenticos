@@ -1,0 +1,370 @@
+---
+/**
+ * EpicChapter.astro — single epic chapter section for /how-it-was-built.
+ *
+ * Renders one <article> containing:
+ *   - Header: epic ID + title + done/total count
+ *   - Progress bar (wide, more prominent than the spine version)
+ *   - Story log: rows of [STORY_ID | status-tag | title | size·tokens·minutes]
+ *   - In-flight beat: accent-bordered block if this epic has in-progress stories
+ *
+ * "Active" epic = status === "active" OR (0 < done_count < story_count).
+ * "Done" epic   = done_count === story_count && story_count > 0.
+ *
+ * Stories in in_progress column get an inflight beat at the bottom of the chapter
+ * rather than being listed as a normal row, so they stand out.
+ *
+ * Static at build. No client JS.
+ */
+
+export interface StoryRow {
+  id: string;
+  title?: string;
+  status?: string;
+  epic?: string;
+  points?: number;
+  size?: string;
+  est_tokens_k?: number;
+  est_minutes?: number;
+}
+
+export interface EpicEntry {
+  id: string;
+  title: string;
+  status: string;
+  story_count: number;
+  done_count: number;
+}
+
+interface Props {
+  epic: EpicEntry;
+  stories: StoryRow[];        // all known stories belonging to this epic
+  inflightIds: string[];      // IDs currently in the in_progress column
+  chapterNum: number;         // 1-based display index
+  /** Optional narrative subtitle for completed/active epics */
+  subtitle?: string;
+}
+
+const { epic, stories, inflightIds, chapterNum, subtitle } = Astro.props;
+
+function epicStateClass(e: EpicEntry): string {
+  if (e.done_count === e.story_count && e.story_count > 0) return 'done';
+  if (e.status === 'active' || (e.done_count > 0 && e.done_count < e.story_count)) return 'active';
+  return 'planned';
+}
+
+function progressPct(e: EpicEntry): number {
+  if (!e.story_count) return 0;
+  return Math.round((e.done_count / e.story_count) * 100);
+}
+
+const stateClass = epicStateClass(epic);
+const pct = progressPct(epic);
+const chNum = String(chapterNum).padStart(2, '0');
+
+// Sort stories: done first (descending ID), then in-flight, then others
+const inflightSet = new Set(inflightIds);
+
+// Separate in-flight stories from the rest (they get their own beat block)
+const inflightStories = stories.filter((s) => inflightSet.has(s.id));
+const regularStories = stories.filter((s) => !inflightSet.has(s.id));
+
+// Status helpers
+function statusClass(status?: string): string {
+  if (!status) return 'backlog';
+  if (status === 'done') return 'done';
+  if (status === 'in-progress') return 'inflight';
+  if (status === 'ready') return 'ready';
+  if (status === 'review') return 'review';
+  return 'backlog';
+}
+function statusLabel(status?: string): string {
+  if (!status) return 'backlog';
+  if (status === 'in-progress') return 'flight';
+  return status;
+}
+
+// Format tokens: "20k" / "201k" / "—"
+function fmtTokens(t?: number): string {
+  if (!t && t !== 0) return '—';
+  if (t >= 1000) return `${Math.round(t)}k`;
+  return `${t}k`;
+}
+// Format minutes: "3m" / "1h 5m" / "—"
+function fmtMin(m?: number): string {
+  if (!m && m !== 0) return '—';
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  const rem = m % 60;
+  return rem ? `${h}h ${rem}m` : `${h}h`;
+}
+---
+
+<article class={`chapter ${stateClass}`}>
+  <header class="chap-head">
+    <span class="chap-id" aria-hidden="true">CH. {chNum}</span>
+    <h2 class="chap-title">
+      <span class="epic-id">{epic.id}</span>
+      <span class="epic-name">{epic.title}</span>
+      <span class="count-accent">{epic.done_count}/{epic.story_count}</span>
+    </h2>
+    <span class={`chap-meta-status ${stateClass}`}>{stateClass}</span>
+  </header>
+  {subtitle && <p class="chap-sub">{subtitle}</p>}
+
+  <div class="meter-pct" aria-hidden="true">
+    <span>progress</span>
+    <span class="pct">{pct}%</span>
+  </div>
+  <div class={`meter-wide ${stateClass}`} role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label={`${epic.title}: ${pct}% complete`}>
+    <div class="fill" style={`width:${pct}%`}></div>
+  </div>
+
+  {regularStories.length > 0 ? (
+    <ul class="log" aria-label={`Stories in ${epic.title}`}>
+      {regularStories.map((s) => (
+        <li>
+          <span class={`t-status ${statusClass(s.status)}`}>{statusLabel(s.status)}</span>
+          <span class="t-id">{s.id}</span>
+          <span class="t-title">
+            {s.title ?? '—'}
+          </span>
+          <span class="t-meta">
+            {s.size && <span class="size">{s.size}</span>}
+            {s.size && (s.est_tokens_k !== undefined || s.est_minutes !== undefined) && <span class="sep">·</span>}
+            {s.est_tokens_k !== undefined && <span class="tok">{fmtTokens(s.est_tokens_k)}</span>}
+            {s.est_tokens_k !== undefined && s.est_minutes !== undefined && <span class="sep">·</span>}
+            {s.est_minutes !== undefined && <span class="min">{fmtMin(s.est_minutes)}</span>}
+          </span>
+        </li>
+      ))}
+    </ul>
+  ) : stories.length === 0 ? (
+    <p class="empty-log">No stories in snapshot — see backlog for planned work.</p>
+  ) : null}
+
+  {inflightStories.map((s) => (
+    <div class="inflight-beat" role="status" aria-live="polite">
+      <span class="tag">
+        <span class="pulse" aria-hidden="true"></span>
+        in flight
+      </span>
+      <span class="who">
+        <span class="id">{s.id}</span> · {s.title ?? 'in progress'}
+      </span>
+      <span class="meta">
+        {s.size ?? '—'} · {fmtTokens(s.est_tokens_k)} · {fmtMin(s.est_minutes)}
+      </span>
+    </div>
+  ))}
+</article>
+
+<style>
+  .chapter {
+    border-top: 1px solid var(--border);
+    padding: 24px 0 22px;
+    font-variant-numeric: tabular-nums lining-nums;
+  }
+  .chapter:first-child { border-top: 0; padding-top: 6px; }
+
+  .chap-head {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: baseline;
+    gap: 14px;
+    margin-bottom: 10px;
+  }
+  .chap-id {
+    color: var(--muted);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .chap-title {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--fg);
+    letter-spacing: 0.01em;
+    font-family: var(--font-mono);
+  }
+  .chap-title .epic-id {
+    color: var(--accent);
+    font-weight: 600;
+    margin-right: 8px;
+    font-size: 12px;
+    letter-spacing: 0.08em;
+  }
+  .chap-title .epic-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    display: inline-block;
+    max-width: 100%;
+    vertical-align: bottom;
+  }
+  .chap-title .count-accent {
+    color: var(--accent);
+    font-weight: 500;
+    margin-left: 10px;
+    font-size: 12px;
+    letter-spacing: 0.04em;
+  }
+  .chap-sub {
+    margin: -4px 0 12px;
+    padding-left: calc(58px + 14px);
+    font-size: 12px;
+    color: var(--muted);
+    font-style: italic;
+    letter-spacing: 0.01em;
+  }
+  @media (max-width: 640px) {
+    .chap-sub { padding-left: 0; }
+  }
+  .chap-meta-status {
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .chap-meta-status.active  { color: var(--accent); }
+  .chap-meta-status.done    { color: var(--success); }
+  .chap-meta-status.planned { color: var(--muted); }
+
+  /* Wide progress bar */
+  .meter-pct {
+    display: flex;
+    justify-content: space-between;
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+  }
+  .meter-pct .pct { color: var(--fg-dim); }
+
+  .meter-wide {
+    height: 6px;
+    background: var(--bg-elevated);
+    margin-bottom: 14px;
+    position: relative;
+    overflow: hidden;
+    border: 1px solid var(--border);
+  }
+  .meter-wide .fill { height: 100%; background: var(--accent); }
+  .meter-wide.done    .fill { background: var(--success); }
+  .meter-wide.planned .fill { background: var(--accent-dim); }
+
+  /* Story-log table rows */
+  .log {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    border-left: 1px dotted var(--border);
+    padding-left: 16px;
+  }
+  .log li {
+    display: grid;
+    grid-template-columns: 56px 60px 1fr auto;
+    gap: 14px;
+    align-items: baseline;
+    padding: 6px 0;
+    border-bottom: 1px dotted var(--border);
+    font-size: 12.5px;
+  }
+  .log li:last-child { border-bottom: 0; }
+
+  .t-status {
+    font-size: 9.5px;
+    color: var(--muted);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .t-status.done     { color: var(--success); }
+  .t-status.ready    { color: var(--warn); }
+  .t-status.inflight { color: var(--accent); }
+  .t-status.review   { color: var(--info); }
+  .t-status.backlog  { color: var(--muted); }
+
+  .t-id    { color: var(--accent); font-weight: 600; letter-spacing: 0.04em; }
+  .t-title { color: var(--fg); }
+  .t-meta {
+    color: var(--muted);
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+    display: flex;
+    gap: 0;
+  }
+  .t-meta .size { color: var(--fg-dim); }
+  .t-meta .tok  { color: var(--fg-dim); }
+  .t-meta .min  { color: var(--fg-dim); }
+  .t-meta .sep  { color: var(--border-strong); padding: 0 5px; }
+
+  .empty-log {
+    font-size: 12px;
+    color: var(--muted);
+    padding: 8px 0 8px 16px;
+    border-left: 1px dotted var(--border);
+    margin: 0;
+  }
+
+  /* In-flight accent beat */
+  .inflight-beat {
+    margin: 10px 0 0;
+    padding: 12px 16px;
+    border: 1px solid var(--accent);
+    background: rgba(255, 106, 0, 0.04);
+    font-size: 12px;
+    color: var(--fg-dim);
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 14px;
+    align-items: baseline;
+  }
+  .inflight-beat .tag {
+    font-size: 9.5px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 600;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .inflight-beat .who    { color: var(--fg); }
+  .inflight-beat .who .id { color: var(--accent); font-weight: 600; }
+  .inflight-beat .meta   { color: var(--muted); font-size: 10px; letter-spacing: 0.04em; white-space: nowrap; }
+
+  .pulse {
+    width: 6px;
+    height: 6px;
+    background: var(--accent);
+    display: inline-block;
+    flex-shrink: 0;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .pulse {
+      animation: pulse-beat 1.6s ease-in-out infinite;
+    }
+  }
+  @keyframes pulse-beat {
+    0%, 100% { opacity: 0.35; }
+    50%       { opacity: 1; }
+  }
+
+  /* Mobile adjustments */
+  @media (max-width: 640px) {
+    .log li {
+      grid-template-columns: 50px 50px 1fr;
+    }
+    .t-meta { display: none; }
+    .chap-head { grid-template-columns: auto 1fr; gap: 10px; }
+    .chap-head .chap-meta-status { grid-column: 1 / -1; }
+    .inflight-beat { grid-template-columns: auto 1fr; }
+    .inflight-beat .meta { display: none; }
+  }
+</style>

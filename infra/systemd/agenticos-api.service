@@ -1,0 +1,27 @@
+[Unit]
+Description=AgenticOS Astro SSR
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=agenticos
+Group=agenticos
+WorkingDirectory=/opt/agenticos
+Environment=HOST=0.0.0.0
+Environment=PORT=3000
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node --experimental-global-webcrypto /opt/agenticos/dist/server/entry.mjs
+Restart=on-failure
+RestartSec=5
+EnvironmentFile=/etc/agenticos.env
+
+# Sandbox hardening (mirrored from S013/cloudflared.service pattern in CT 103)
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/agenticos/data
+
+[Install]
+WantedBy=multi-user.target

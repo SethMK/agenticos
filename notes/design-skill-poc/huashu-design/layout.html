@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AGENTICOS / index</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;0,600;1,300;1,400&family=Newsreader:ital,opsz,wght@1,6..72,300;1,6..72,400&display=swap" rel="stylesheet" />
+<style>
+  /* ============================================================
+     huashu-design · AGENTICOS public CV
+     ------------------------------------------------------------
+     Philosophy: Kenya Hara (Eastern minimalism, "emptiness as
+     vessel") crossed with Field.io's generative restraint.
+     Signature detail (120%): the wordmark — IBM Plex Mono caps
+     with an italic Newsreader serif lowercase /index suffix.
+     Mono + serif italic against a near-black canvas is the
+     single moment of warmth on the page.
+     ============================================================ */
+
+  :root {
+    /* Cool charcoal — not pure black. Reads softer in dim rooms. */
+    --ink-0:  #0D0D0F;
+    --ink-1:  #131316;
+    --ink-2:  #1B1B1F;
+    --ink-3:  #26262B;
+
+    /* Type — warm grey rather than pure white */
+    --paper:  #ECE7DE;   /* a hint of bone */
+    --paper-dim: #9C978E;
+    --paper-mute: #5E5B56;
+
+    /* Hairlines */
+    --rule:   #2A2A30;
+    --rule-strong: #3D3D45;
+
+    /* Single accent — honey amber. Warmer than orange,
+       reads as "lamp light through paper" rather than alarm. */
+    --amber:   #F5A524;
+    --amber-deep: #B8771A;
+    --amber-glow: rgba(245, 165, 36, 0.10);
+
+    /* Type scale — three sizes per page (Hara discipline) */
+    --t-mu: 0.6875rem;  /* 11px — meta caps */
+    --t-sm: 0.8125rem;  /* 13px — body */
+    --t-md: 0.9375rem;  /* 15px — emphasis */
+    --t-hero: clamp(5rem, 14vw, 11rem); /* the one number */
+
+    --gutter: clamp(1.5rem, 4vw, 3.5rem);
+
+    --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --font-serif: "Newsreader", "Iowan Old Style", Georgia, serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    background: var(--ink-0);
+    color: var(--paper);
+    font-family: var(--font-mono);
+    font-size: var(--t-sm);
+    line-height: 1.55;
+    font-variant-numeric: tabular-nums lining-nums;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+  }
+
+  /* Generative dot grid — the "breathing" background.
+     Subtle enough to feel like paper grain, not decoration. */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background-image: radial-gradient(circle at 1px 1px, #1F1F25 1px, transparent 1px);
+    background-size: 24px 24px;
+    opacity: 0.55;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* A single vertical hairline running through the layout —
+     a Hara-style "axis" you barely notice */
+  body::after {
+    content: "";
+    position: fixed;
+    top: 0; bottom: 0;
+    left: 50%;
+    width: 1px;
+    background: var(--rule);
+    opacity: 0.5;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .page {
+    position: relative;
+    z-index: 1;
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: var(--gutter);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ── Meta strip ─────────────────────────────────────────── */
+  .meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: var(--t-mu);
+    color: var(--paper-mute);
+    text-transform: uppercase;
+    letter-spacing: 0.22em;
+    padding-bottom: 2.5rem;
+  }
+  .meta .left { display: flex; gap: 2.5rem; }
+  .meta .marker {
+    color: var(--amber);
+    margin-right: 0.5rem;
+    font-size: 0.7em;
+    vertical-align: 1px;
+  }
+
+  /* ── Wordmark — signature moment ────────────────────────── */
+  .brand {
+    padding: 2rem 0 4rem;
+  }
+  .wordmark {
+    display: flex;
+    align-items: baseline;
+    gap: 0.4ch;
+    line-height: 1;
+  }
+  .wordmark .caps {
+    font-family: var(--font-mono);
+    font-weight: 500;
+    font-size: clamp(2rem, 5.5vw, 3.75rem);
+    letter-spacing: 0.05em;
+    color: var(--paper);
+  }
+  .wordmark .slash {
+    font-family: var(--font-serif);
+    font-style: italic;
+    font-weight: 300;
+    font-size: clamp(2rem, 5.5vw, 3.75rem);
+    color: var(--amber);
+    margin: 0 0.1ch;
+  }
+  .wordmark .idx {
+    font-family: var(--font-serif);
+    font-style: italic;
+    font-weight: 300;
+    font-size: clamp(1.5rem, 4vw, 2.75rem);
+    color: var(--paper-dim);
+    letter-spacing: 0;
+  }
+  .brand-sub {
+    margin-top: 1.5rem;
+    font-size: var(--t-sm);
+    color: var(--paper-mute);
+    max-width: 56ch;
+    font-style: italic;
+    font-family: var(--font-serif);
+    font-weight: 400;
+  }
+
+  /* ── Body composition ───────────────────────────────────── */
+  .composition {
+    flex: 1;
+    display: grid;
+    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+    gap: var(--gutter);
+    align-items: end;
+    padding: 2rem 0 4rem;
+  }
+
+  /* ── Stat — the single hero number ──────────────────────── */
+  .stat {
+    position: relative;
+    padding: 0 0 1rem 0;
+  }
+  .stat .label-line {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-size: var(--t-mu);
+    color: var(--paper-mute);
+    text-transform: uppercase;
+    letter-spacing: 0.28em;
+    margin-bottom: 1.5rem;
+  }
+  .stat .label-line::before {
+    content: "";
+    display: block;
+    width: 2rem;
+    height: 1px;
+    background: var(--amber);
+  }
+  .stat .label-line::after {
+    content: "";
+    display: block;
+    flex: 1;
+    height: 1px;
+    background: var(--rule);
+  }
+  .stat .value {
+    font-family: var(--font-mono);
+    font-weight: 300;
+    font-size: var(--t-hero);
+    line-height: 0.9;
+    letter-spacing: -0.04em;
+    color: var(--paper);
+    display: flex;
+    align-items: baseline;
+  }
+  /* The 'M' rendered in amber serif italic — a quiet flourish */
+  .stat .value .unit {
+    font-family: var(--font-serif);
+    font-style: italic;
+    font-weight: 300;
+    color: var(--amber);
+    font-size: 0.55em;
+    margin-left: 0.05em;
+  }
+  .stat .delta {
+    margin-top: 2rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--rule);
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+    font-size: var(--t-sm);
+  }
+  .stat .delta .arrow {
+    color: var(--amber);
+    font-size: 0.85em;
+  }
+  .stat .delta .pct {
+    color: var(--paper);
+    font-weight: 500;
+    letter-spacing: 0.02em;
+  }
+  .stat .delta .vs {
+    color: var(--paper-mute);
+    font-family: var(--font-serif);
+    font-style: italic;
+    font-weight: 300;
+    font-size: 1.05em;
+  }
+
+  /* ── Chart ──────────────────────────────────────────────── */
+  .chart {
+    position: relative;
+    padding: 1rem 0;
+  }
+  .chart-meta {
+    display: flex;
+    justify-content: space-between;
+    font-size: var(--t-mu);
+    color: var(--paper-mute);
+    text-transform: uppercase;
+    letter-spacing: 0.22em;
+    padding-bottom: 1.25rem;
+    border-bottom: 1px solid var(--rule);
+  }
+  .chart-meta .title { color: var(--paper); }
+  .chart-svg {
+    width: 100%;
+    height: 280px;
+    margin-top: 1rem;
+    display: block;
+  }
+  .chart-axis-x {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 0.5rem;
+    font-size: var(--t-mu);
+    color: var(--paper-mute);
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+  }
+
+  /* ── Log — minimalist, bottom anchor ────────────────────── */
+  .log {
+    margin-top: auto;
+    padding-top: 3rem;
+    border-top: 1px solid var(--rule);
+  }
+  .log-label {
+    font-size: var(--t-mu);
+    color: var(--paper-mute);
+    text-transform: uppercase;
+    letter-spacing: 0.28em;
+    margin-bottom: 1rem;
+  }
+  .log-row {
+    display: grid;
+    grid-template-columns: 4rem 4rem 1fr auto;
+    align-items: baseline;
+    gap: 1.5rem;
+    font-size: var(--t-md);
+    padding: 0.5rem 0;
+  }
+  .log-row .ts {
+    color: var(--paper-mute);
+    font-variant-numeric: tabular-nums;
+  }
+  .log-row .sid {
+    color: var(--amber);
+    font-weight: 500;
+    letter-spacing: 0.02em;
+  }
+  .log-row .msg {
+    color: var(--paper);
+    font-family: var(--font-serif);
+    font-style: italic;
+    font-weight: 300;
+    font-size: 1.1em;
+  }
+  .log-row .dot {
+    color: var(--amber);
+    font-size: 0.7em;
+  }
+
+  .colophon {
+    margin-top: 2.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--rule);
+    display: flex;
+    justify-content: space-between;
+    font-size: var(--t-mu);
+    color: var(--paper-mute);
+    text-transform: uppercase;
+    letter-spacing: 0.22em;
+  }
+  .colophon em {
+    font-family: var(--font-serif);
+    font-style: italic;
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--paper-dim);
+    font-size: 1.1em;
+  }
+
+  ::selection { background: var(--amber); color: var(--ink-0); }
+
+  @media (max-width: 760px) {
+    .composition {
+      grid-template-columns: 1fr;
+      gap: 3rem;
+    }
+    body::after { display: none; }
+    .meta .left { flex-direction: column; gap: 0.5rem; }
+  }
+</style>
+</head>
+<body>
+  <div class="page">
+
+    <!-- Meta strip -->
+    <div class="meta">
+      <div class="left">
+        <span><span class="marker">●</span>online</span>
+        <span>session · 0x1A4F</span>
+        <span>2026.05.11 / 00.30 UTC</span>
+      </div>
+      <div>v 0.2.0 — stable</div>
+    </div>
+
+    <!-- Wordmark -->
+    <header class="brand">
+      <div class="wordmark">
+        <span class="caps">AGENTICOS</span>
+        <span class="slash">/</span>
+        <span class="idx">index</span>
+      </div>
+      <p class="brand-sub">
+        A small operating system for one operator and many agents.
+        This page is the front door — what runs, what spent, what is asleep.
+      </p>
+    </header>
+
+    <!-- Composition -->
+    <section class="composition">
+
+      <!-- StatCard -->
+      <article class="stat" aria-label="Tokens stat">
+        <div class="label-line">tokens</div>
+        <div class="value">
+          <span>2.4</span><span class="unit">M</span>
+        </div>
+        <div class="delta">
+          <span class="arrow">▲</span>
+          <span class="pct">+18%</span>
+          <span class="vs">vs. last week</span>
+        </div>
+      </article>
+
+      <!-- Chart -->
+      <article class="chart" aria-label="30 day usage">
+        <div class="chart-meta">
+          <span class="title">Usage · 30 days</span>
+          <span>tokens / day</span>
+        </div>
+        <svg class="chart-svg" viewBox="0 0 600 280" preserveAspectRatio="none" aria-hidden="true">
+          <!-- Horizontal gridlines (Hara restraint: just 3, hair-thin) -->
+          <g stroke="#26262B" stroke-width="0.5">
+            <line x1="0" y1="70"  x2="600" y2="70"  />
+            <line x1="0" y1="140" x2="600" y2="140" />
+            <line x1="0" y1="210" x2="600" y2="210" />
+          </g>
+          <!-- Y axis labels -->
+          <g font-family="IBM Plex Mono" font-size="9" fill="#5E5B56" letter-spacing="1">
+            <text x="2" y="66">120K</text>
+            <text x="2" y="136">80K</text>
+            <text x="2" y="206">40K</text>
+          </g>
+
+          <!-- The line, no fill. Single 2.5px stroke. 30 datapoints. -->
+          <path d="
+            M 0 220
+            L 20 215 L 40 218 L 60 200 L 80 205
+            L 100 190 L 120 198 L 140 175 L 160 188
+            L 180 165 L 200 172 L 220 155 L 240 142
+            L 260 160 L 280 138 L 300 125 L 320 132
+            L 340 108 L 360 115 L 380 96  L 400 88
+            L 420 100 L 440 75  L 460 82  L 480 60
+            L 500 68  L 520 48  L 540 56  L 560 38
+            L 580 30  L 600 24"
+            fill="none" stroke="#F5A524" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+
+          <!-- Datapoint dots — subtle, every 5th -->
+          <g fill="#F5A524">
+            <circle cx="0"   cy="220" r="1.5" opacity="0.35"/>
+            <circle cx="100" cy="190" r="1.5" opacity="0.35"/>
+            <circle cx="200" cy="172" r="1.5" opacity="0.35"/>
+            <circle cx="300" cy="125" r="1.5" opacity="0.35"/>
+            <circle cx="400" cy="88"  r="1.5" opacity="0.35"/>
+            <circle cx="500" cy="68"  r="1.5" opacity="0.35"/>
+          </g>
+
+          <!-- Terminal marker -->
+          <circle cx="600" cy="24" r="3.5" fill="#F5A524"/>
+          <circle cx="600" cy="24" r="8" fill="none" stroke="#F5A524" stroke-width="0.5" opacity="0.4"/>
+        </svg>
+        <div class="chart-axis-x">
+          <span>apr 12</span>
+          <span>apr 22</span>
+          <span>may 02</span>
+          <span>today</span>
+        </div>
+      </article>
+
+    </section>
+
+    <!-- Log -->
+    <section class="log" aria-label="Recent log">
+      <div class="log-label">log · tail</div>
+      <div class="log-row">
+        <span class="ts">00:30</span>
+        <span class="sid">S001</span>
+        <span class="msg">done</span>
+        <span class="dot">●</span>
+      </div>
+    </section>
+
+    <div class="colophon">
+      <span>agenticos / index</span>
+      <span><em>composed in mono &amp; serif italic</em></span>
+    </div>
+
+  </div>
+</body>
+</html>

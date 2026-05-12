@@ -1,0 +1,209 @@
+---
+/**
+ * ProjectSplitChart.astro — S023
+ *
+ * Renders the share of *projects* split between work and personal as a
+ * single horizontal segmented bar (variant-1 from the S022 spike).
+ *
+ * Why this idiom:
+ *   The dashboard already speaks the "share of one whole" language with
+ *   ModelSplitChart's horizontal bar. The work/personal split is the same
+ *   kind of question — proportional share of a single total — so reusing
+ *   the same grammar (hairline border, dotted-bottom legend rows, accent
+ *   ramp) keeps the page honest instead of inventing new chrome.
+ *
+ * Colour mapping:
+ *   work     -> --accent                                  (dominant, ~78.8%)
+ *   personal -> color-mix(in oklch, --accent 45%, --bg)   (dim-accent step
+ *               matching variant-1's mockup; keeps both segments inside the
+ *               orange family, no new tokens introduced)
+ *
+ * Data: read from `data/snapshots/public.json` at build time. The pipeline
+ *   computes the work/personal split in snapshot.ts; this component just
+ *   trusts the snapshot and renders. No client JS, no fetch.
+ */
+import { formatInt } from '../lib/format.ts';
+import snapshot from '../../data/snapshots/public.json';
+
+const total = snapshot.counts.projects;
+const work = snapshot.counts.projects_by_classification.work;
+const personal = snapshot.counts.projects_by_classification.personal;
+
+const workPct = total > 0 ? (work / total) * 100 : 0;
+const personalPct = total > 0 ? (personal / total) * 100 : 0;
+
+const workColour = 'var(--accent)';
+const personalColour = 'color-mix(in oklch, var(--accent) 45%, var(--bg))';
+
+const segments = [
+  {
+    key: 'work',
+    label: 'work',
+    count: work,
+    pct: workPct,
+    colour: workColour,
+  },
+  {
+    key: 'personal',
+    label: 'personal',
+    count: personal,
+    pct: personalPct,
+    colour: personalColour,
+  },
+];
+---
+<section class="project-split" aria-label={`Project split: ${work} work, ${personal} personal, ${total} total`}>
+  <header class="head">
+    <h2 class="title"><span class="glyph" aria-hidden="true">◆</span> PROJECT SPLIT</h2>
+    <div class="totals">
+      <span class="totals-num">{formatInt(total)}</span>
+      <span class="totals-sep">·</span>
+      <span class="totals-label">total</span>
+    </div>
+  </header>
+
+  <svg
+    class="bar"
+    role="img"
+    aria-label={`Project split: ${work} work, ${personal} personal, ${total} total`}
+    viewBox="0 0 100 1"
+    preserveAspectRatio="none"
+  >
+    {(() => {
+      let x = 0;
+      return segments.map((s) => {
+        const w = s.pct;
+        const rect = (
+          <rect x={x} y={0} width={w} height={1} fill={s.colour}>
+            <title>{`${s.label} — ${s.pct.toFixed(1)}% · ${s.count} projects`}</title>
+          </rect>
+        );
+        x += w;
+        return rect;
+      });
+    })()}
+  </svg>
+
+  <ul class="legend">
+    {
+      segments.map((s) => (
+        <li class="row">
+          <span class="swatch" aria-hidden="true" style={`background: ${s.colour};`} />
+          <span class="name">{s.label}</span>
+          <span class="pct">{s.pct.toFixed(1)}%</span>
+          <span class="cnt">{formatInt(s.count)}</span>
+        </li>
+      ))
+    }
+  </ul>
+</section>
+
+<style>
+  .project-split {
+    position: relative;
+    border: 1px solid var(--border);
+    background: var(--bg-panel);
+    padding: var(--space-5);
+  }
+
+  .head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-4);
+    margin-bottom: var(--space-4);
+  }
+
+  .title {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: var(--size-sm);
+    color: var(--fg-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  .title .glyph {
+    color: var(--accent);
+    font-size: 0.65em;
+  }
+
+  .totals {
+    font-size: var(--size-sm);
+    color: var(--fg-dim);
+    letter-spacing: 0.02em;
+  }
+  .totals-num {
+    color: var(--fg);
+    font-weight: 600;
+  }
+  .totals-sep {
+    color: var(--muted);
+    margin: 0 var(--space-2);
+  }
+  .totals-label {
+    color: var(--fg-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  /* The bar itself: thin, square, hairline-framed — same idiom as ModelSplitChart. */
+  .bar {
+    display: block;
+    width: 100%;
+    height: 14px;
+    border: 1px solid var(--border-strong);
+    background: var(--bg);
+    overflow: hidden;
+    margin-bottom: var(--space-4);
+    transition: filter var(--motion-fast) var(--easing);
+  }
+  .bar:hover {
+    filter: brightness(1.1);
+  }
+
+  /* Legend: one row per bucket, monospace columns. */
+  .legend {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: grid;
+    gap: var(--space-1);
+    font-size: var(--size-sm);
+  }
+  .row {
+    display: grid;
+    grid-template-columns: 12px 1fr auto auto;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-1) 0;
+    border-bottom: 1px dotted var(--border);
+  }
+  .row:last-child {
+    border-bottom: 0;
+  }
+  .swatch {
+    width: 10px;
+    height: 10px;
+    border: 1px solid var(--border-strong);
+  }
+  .name {
+    color: var(--fg);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .pct {
+    color: var(--accent);
+    font-weight: 600;
+    min-width: 5ch;
+    text-align: right;
+  }
+  .cnt {
+    color: var(--fg-dim);
+    min-width: 4ch;
+    text-align: right;
+  }
+</style>

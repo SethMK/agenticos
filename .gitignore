@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.astro/
+data/snapshots/
+data/redaction-map.json
+data/snapshots/mcp-servers-debug.json
+
+# Runtime logs (keep dir via .gitkeep)
+logs/*.log
+
+# Vendored external project (open-design clone from S016 design-skill-poc spike, 235M)
+notes/design-skill-poc/open-design-app/

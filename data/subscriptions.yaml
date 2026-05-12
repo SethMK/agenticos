@@ -1,0 +1,22 @@
+currency: EUR
+subscriptions:
+  # Pro plan — Jan 2025 through Mar 2026 (15 monthly charges billed ~13th of each month).
+  # 4 invoices show "Partially Refunded" (Sep/Aug 2025, Feb/Mar 2026); exact refund amounts
+  # not yet recovered — update refund field when Marcin clicks each "View" in billing console.
+  - plan: pro
+    monthly: 22.14
+    start: "2025-01"
+    end: "2026-03"
+    status: partially_refunded
+    notes: "monthly €22.14; 4 invoices partially refunded (Sep/Aug 2025, Feb/Mar 2026) — exact refund amounts not yet recovered"
+
+  # Max plan — upgraded mid-cycle 2026-03-16 with a proration charge.
+  # First full Max month billed 2026-04-16. Still active as of 2026-05-11.
+  - plan: max
+    monthly: 90.00
+    start: "2026-03"
+    end: null
+    proration:
+      - date: "2026-03-16"
+        amount: 73.57
+    notes: "upgraded mid-cycle 2026-03-16; first full month 2026-04-16"

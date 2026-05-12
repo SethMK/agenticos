@@ -1,0 +1,239 @@
+---
+/**
+ * ModelSplitChart.astro — S017
+ *
+ * Renders the share of *tokens* spent per Claude model across all
+ * projects in the public snapshot.
+ *
+ * Visualisation choice: **horizontal stacked bar**.
+ *   - Compact, monospace-friendly, sits cleanly below the StatCard
+ *     grid with one row of consumed vertical space.
+ *   - One bar = "all my tokens"; segments = each model's share.
+ *     Reads naturally as a token mix at a glance.
+ *   - Avoids the donut's circular geometry which fights the
+ *     square / hairline grammar locked in tokens.css.
+ *   - Vertical bars wouldn't show "share of one whole" as
+ *     intuitively, and 4 thin verticals look fussy at this size.
+ *
+ * Why share-of-TOKENS, not share-of-USD:
+ *   Opus is ~80x the per-token price of Haiku in this snapshot,
+ *   so a USD pie would be ~98% Opus 4-7 and erase the fact that
+ *   Haiku and Sonnet do real volume. We do still surface the
+ *   per-model $ underneath the bar — but the segment widths are
+ *   driven by tokens.
+ *
+ * Colour mapping (decision):
+ *   We keep the orange accent dominant and let Opus 4-7 own it,
+ *   then drop in three desaturated status hues for clear visual
+ *   separation. Status colours stay desaturated per the design
+ *   system ("orange remains the loudest thing on the page").
+ *
+ *     Opus 4-7  -> --accent       (#FF6A00)   dominant series
+ *     Opus 4-6  -> --accent-dim   (#B24A00)   same hue, dimmed
+ *     Sonnet 4-6 -> --warn        (#E8B339)   yellow, mid tier
+ *     Haiku 4-5 -> --success      (#6FBF73)   green, cheap/fast
+ *
+ *   Unknown models fall back to --muted so the chart degrades
+ *   gracefully if pipeline emits a new model id we don't map.
+ *
+ * Data: read from `data/snapshots/public.json` at build time
+ * (same path StatCard / index.astro use). No client JS.
+ */
+import { formatTokens, shortModelName } from '../lib/format.ts';
+import snapshot from '../../data/snapshots/public.json';
+
+interface ModelRow {
+  model: string;
+  tokens: number;
+  usd: number;
+  rows?: number;
+}
+
+// Order by token-share desc so the bar reads big-to-small left-to-right.
+const models: ModelRow[] = [...((snapshot as { models?: ModelRow[] }).models ?? [])]
+  .filter((m) => Number.isFinite(m.tokens) && m.tokens > 0)
+  .sort((a, b) => b.tokens - a.tokens);
+
+const totalTokens = models.reduce((s, m) => s + m.tokens, 0);
+
+// Map each model id to a colour token. Keep the table small and explicit;
+// substring match so we don't have to keep up with date suffixes like
+// `-20251001` that pricing sources sometimes tack on.
+function colourFor(id: string): string {
+  const lower = id.toLowerCase();
+  if (lower.includes('opus-4-7')) return 'var(--accent)';
+  if (lower.includes('opus-4-6')) return 'var(--accent-dim)';
+  if (lower.includes('sonnet')) return 'var(--warn)';
+  if (lower.includes('haiku')) return 'var(--success)';
+  return 'var(--muted)';
+}
+
+const segments = models.map((m) => {
+  const sharePct = totalTokens > 0 ? (m.tokens / totalTokens) * 100 : 0;
+  return {
+    id: m.model,
+    short: shortModelName(m.model),
+    tokens: m.tokens,
+    usd: m.usd,
+    sharePct,
+    colour: colourFor(m.model),
+  };
+});
+---
+<section class="model-split" aria-label="Token share per Claude model">
+  <header class="head">
+    <h2 class="title"><span class="glyph" aria-hidden="true">◆</span> MODEL SPLIT</h2>
+    <div class="totals">
+      <span class="totals-tokens">{formatTokens(totalTokens)}</span>
+    </div>
+  </header>
+
+  <div
+    class="bar"
+    role="img"
+    aria-label={`Token share: ${segments
+      .map((s) => `${s.short} ${s.sharePct.toFixed(1)}%`)
+      .join(', ')}`}
+  >
+    {
+      segments.map((s) => (
+        <span
+          class="seg"
+          style={`width: ${s.sharePct}%; background: ${s.colour};`}
+          title={`${s.short} — ${s.sharePct.toFixed(1)}% · ${formatTokens(s.tokens)} tok`}
+        />
+      ))
+    }
+  </div>
+
+  <ul class="legend">
+    {
+      segments.map((s) => (
+        <li class="row">
+          <span class="swatch" aria-hidden="true" style={`background: ${s.colour};`} />
+          <span class="name">{s.short}</span>
+          <span class="pct">{s.sharePct.toFixed(1)}%</span>
+          <span class="tok">{formatTokens(s.tokens)}</span>
+        </li>
+      ))
+    }
+  </ul>
+</section>
+
+<style>
+  .model-split {
+    position: relative;
+    border: 1px solid var(--border);
+    background: var(--bg-panel);
+    padding: var(--space-5);
+  }
+
+  .head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-4);
+    margin-bottom: var(--space-4);
+  }
+
+  .title {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: var(--size-sm);
+    color: var(--fg-dim); /* a11y: --muted fails WCAG AA on --bg-panel at --size-sm (3.54:1 < 4.5:1) */
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  .title .glyph {
+    color: var(--accent);
+    font-size: 0.65em;
+  }
+
+  .totals {
+    font-size: var(--size-sm);
+    color: var(--fg-dim);
+    letter-spacing: 0.02em;
+  }
+  .totals-tokens {
+    color: var(--fg);
+    font-weight: 600;
+  }
+  .totals-sep {
+    color: var(--muted);
+    margin: 0 var(--space-2);
+  }
+
+  /* The bar itself: thin, square, hairline-framed. */
+  .bar {
+    display: flex;
+    width: 100%;
+    height: 14px;
+    border: 1px solid var(--border-strong);
+    background: var(--bg);
+    overflow: hidden;
+    margin-bottom: var(--space-4);
+  }
+  .seg {
+    display: block;
+    height: 100%;
+    transition: filter var(--motion-fast) var(--easing);
+  }
+  .seg + .seg {
+    border-left: 1px solid var(--bg-panel);
+  }
+  .seg:hover {
+    filter: brightness(1.15);
+  }
+
+  /* Legend table: one row per model, monospace columns. */
+  .legend {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: grid;
+    gap: var(--space-1);
+    font-size: var(--size-sm);
+  }
+  .row {
+    display: grid;
+    grid-template-columns: 12px 1fr auto auto;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-1) 0;
+    border-bottom: 1px dotted var(--border);
+  }
+  .row:last-child {
+    border-bottom: 0;
+  }
+  .swatch {
+    width: 10px;
+    height: 10px;
+    border: 1px solid var(--border-strong);
+  }
+  .name {
+    color: var(--fg);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .pct {
+    color: var(--accent);
+    font-weight: 600;
+    min-width: 5ch;
+    text-align: right;
+  }
+  .tok {
+    color: var(--fg-dim);
+    min-width: 7ch;
+    text-align: right;
+  }
+  @media (max-width: 640px) {
+    .row {
+      grid-template-columns: 10px 1fr auto auto;
+      gap: var(--space-2);
+    }
+  }
+</style>

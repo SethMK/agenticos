@@ -1,0 +1,190 @@
+---
+/**
+ * BuildReceipt.astro — right sidebar for /how-it-was-built.
+ *
+ * Two sections:
+ *   1. BUILD RECEIPT — raw column counts + quick story metrics
+ *   2. THE LOOP — ASCII agent-loop diagram (orchestrator → implementer → qa-verifier)
+ *   3. TYPICAL STORY — size/token/time anchor
+ *
+ * Static at build. No client JS.
+ */
+
+interface ColumnCounts {
+  backlog: number;
+  ready: number;
+  in_progress: number;
+  review: number;
+  done: number;
+}
+
+interface Props {
+  columns: ColumnCounts;
+  totalEpics: number;
+}
+
+const { columns, totalEpics } = Astro.props;
+
+const total = columns.backlog + columns.ready + columns.in_progress + columns.review + columns.done;
+---
+
+<aside class="sidecar" aria-label="Build receipt and agent loop">
+
+  <!-- Section 1: Raw column counts -->
+  <section class="receipt-section">
+    <h2 class="side-heading"><span class="glyph" aria-hidden="true">◆</span> build receipt</h2>
+    <ul class="stats-list">
+      <li>
+        <span class="k">stories total</span>
+        <span class="v accent">{total}</span>
+      </li>
+      <li>
+        <span class="k">done</span>
+        <span class="v accent">{columns.done}</span>
+      </li>
+      <li>
+        <span class="k">in flight</span>
+        <span class="v">{String(columns.in_progress).padStart(2, '0')}</span>
+      </li>
+      <li>
+        <span class="k">ready</span>
+        <span class="v">{String(columns.ready).padStart(2, '0')}</span>
+      </li>
+      <li>
+        <span class="k">backlog</span>
+        <span class="v">{String(columns.backlog).padStart(2, '0')}</span>
+      </li>
+      <li>
+        <span class="k">review</span>
+        <span class="v">{String(columns.review).padStart(2, '0')}</span>
+      </li>
+      <li>
+        <span class="k">epics</span>
+        <span class="v">{String(totalEpics).padStart(2, '0')}</span>
+      </li>
+    </ul>
+  </section>
+
+  <!-- Section 2: Typical story anchor -->
+  <section class="receipt-section">
+    <h2 class="side-heading"><span class="glyph" aria-hidden="true">◆</span> typical story</h2>
+    <ul class="stats-list">
+      <li><span class="k">tokens</span><span class="v small">~50k</span></li>
+      <li><span class="k">wall-clock</span><span class="v small">~20m</span></li>
+      <li><span class="k">agents</span><span class="v small">impl + qa</span></li>
+      <li><span class="k">model</span><span class="v small">sonnet</span></li>
+      <li><span class="k">size cap</span><span class="v small">≤ 3 pts</span></li>
+    </ul>
+  </section>
+
+  <!-- Section 3: Agent-loop ASCII diagram -->
+  <section class="receipt-section">
+    <h2 class="side-heading"><span class="glyph" aria-hidden="true">◆</span> the loop</h2>
+    <div class="loop-box">
+      <pre aria-label="Agent loop diagram: orchestrator pulls a card, dispatches implementer, then qa-verifier, then loops back to pull the next card"><b>orchestrator</b>
+     │ pulls one card
+     ▼
+┌─ <i>READY</i> ───────┐
+│                │
+│  <b>implementer</b>  │ writes code
+│       │        │
+│       ▼        │
+│  <b>qa-verifier</b>  │ checks AC
+│       │        │
+│       ▼        │
+└─ <i>DONE</i> ────────┘
+     │
+     ▼
+<b>orchestrator</b>
+     │ pulls next
+     ▼
+     ...</pre>
+      <p class="caption">two agents per story · sequential · WIP determined per-pull by file-overlap.</p>
+    </div>
+  </section>
+
+</aside>
+
+<style>
+  .sidecar {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+  .receipt-section {
+    margin-bottom: 28px;
+  }
+  .side-heading {
+    margin: 0 0 12px;
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 600;
+    font-family: var(--font-mono);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .side-heading .glyph { color: var(--accent); }
+
+  /* Stats list */
+  .stats-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    border: 1px solid var(--border);
+    background: var(--bg-panel);
+    font-variant-numeric: tabular-nums lining-nums;
+  }
+  .stats-list li {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 9px 14px;
+    border-bottom: 1px dotted var(--border);
+    font-size: 12px;
+  }
+  .stats-list li:last-child { border-bottom: 0; }
+  .stats-list .k {
+    color: var(--fg-dim);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-size: 10px;
+  }
+  .stats-list .v {
+    color: var(--fg);
+    font-weight: 600;
+    font-size: 14px;
+  }
+  .stats-list .v.accent { color: var(--accent); }
+  .stats-list .v.small  { color: var(--fg); font-size: 12px; font-weight: 400; }
+
+  /* Loop diagram */
+  .loop-box {
+    border: 1px solid var(--border);
+    background: var(--bg-panel);
+    padding: 14px 16px;
+    font-size: 11px;
+    line-height: 1.6;
+    color: var(--fg-dim);
+  }
+  .loop-box pre {
+    margin: 0;
+    font-family: var(--font-mono);
+    white-space: pre;
+    color: var(--fg-dim);
+    line-height: 1.5;
+    font-size: 11px;
+    overflow-x: auto;
+  }
+  .loop-box pre b { color: var(--accent); font-weight: 600; }
+  .loop-box pre i { color: var(--fg); font-style: normal; }
+  .loop-box .caption {
+    margin-top: 10px;
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 0.08em;
+    line-height: 1.55;
+  }
+</style>

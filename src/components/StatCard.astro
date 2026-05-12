@@ -1,0 +1,269 @@
+---
+/**
+ * StatCard.astro — single stat-card panel.
+ *
+ * Anatomy (per docs/design-system.md):
+ *   label  — sm, muted, uppercase, leading ◆ accent glyph
+ *   value  — display face, xl, accent colour
+ *   delta  — sm, optional, ▲/▼ + % vs prior period
+ *   unit   — sm, optional suffix shown next to value
+ *
+ * Frame: hairline `--border` panel on `--bg-panel`, with four
+ * accent corner brackets matching the frontend-design PoC.
+ *
+ * The card is purely presentational — no client JS. Static at build.
+ */
+export interface Props {
+  label: string;
+  value: string | number;
+  delta?: string;
+  context?: string;  // alternative bottom line (e.g. "— Max since 2026-03")
+  unit?: string;
+  trend?: number[];  // S025: 7-element array oldest→newest; renders block-char sparkline
+  topNames?: string[];  // S050: fade-cycling list of top names shown below sparkline
+}
+
+const { label, value, delta, context, unit, trend, topNames } = Astro.props;
+
+// S025: sparkline — map a 7-element trend array to block characters using the
+// same non-zero quartile bin algorithm as ActivityHeatmap.astro:109-126.
+// Levels 0-4 → ▁▂▄▆█ (5 glyphs; 0=zero, 1=low, 2=mid-low, 3=mid-high, 4=high).
+const SPARKLINE_CHARS = ['▁', '▂', '▄', '▆', '█'] as const;
+
+function buildSparkline(t: number[]): { glyphs: string; ariaLabel: string } | null {
+  if (!t || t.length === 0) return null;
+  const nonZero = t.filter((v) => v > 0).sort((a, b) => a - b);
+  if (nonZero.length < 2) {
+    // Fewer than 2 non-zero days — still render if any data exists, but use flat minimal glyphs.
+    const glyphs = t.map((v) => (v > 0 ? SPARKLINE_CHARS[1] : SPARKLINE_CHARS[0])).join('');
+    return { glyphs, ariaLabel: `7-day trend: ${t.join(', ')}` };
+  }
+  function quantile(sorted: number[], q: number): number {
+    const pos = (sorted.length - 1) * q;
+    const lo = Math.floor(pos);
+    const hi = Math.ceil(pos);
+    if (lo === hi) return sorted[lo]!;
+    return sorted[lo]! + (sorted[hi]! - sorted[lo]!) * (pos - lo);
+  }
+  const q1 = quantile(nonZero, 0.25);
+  const q2 = quantile(nonZero, 0.5);
+  const q3 = quantile(nonZero, 0.75);
+  const glyphs = t.map((v) => {
+    if (v <= 0) return SPARKLINE_CHARS[0];
+    if (v <= q1) return SPARKLINE_CHARS[1];
+    if (v <= q2) return SPARKLINE_CHARS[2];
+    if (v <= q3) return SPARKLINE_CHARS[3];
+    return SPARKLINE_CHARS[4];
+  }).join('');
+  return { glyphs, ariaLabel: `7-day trend: ${t.join(', ')}` };
+}
+
+const sparkline = trend && trend.length > 0 ? buildSparkline(trend) : null;
+
+// S050 β: chunk topNames into fixed 4 pages. Page count is hardcoded so the
+// keyframe percentages can be locked to 25% per page (1%–22% visible, 25%–100% hidden).
+// Without a fixed page count, the visible-window % can't be expressed in a single
+// @keyframes block, which is what caused the initial-shipped multi-overlap bug.
+const TOPNAME_PAGE_COUNT = 4;
+const topNamePages: string[][] = topNames && topNames.length > 0
+  ? Array.from({ length: TOPNAME_PAGE_COUNT }, (_, i) => {
+      const start = Math.floor((i * topNames.length) / TOPNAME_PAGE_COUNT);
+      const end = Math.floor(((i + 1) * topNames.length) / TOPNAME_PAGE_COUNT);
+      return topNames.slice(start, end);
+    }).filter((p) => p.length > 0)
+  : [];
+
+// Detect a leading sign on the delta string so we can colour ▲ vs ▼.
+const deltaDir =
+  delta && delta.trim().startsWith('-')
+    ? 'down'
+    : delta && delta.trim().length > 0
+      ? 'up'
+      : 'flat';
+const deltaGlyph = deltaDir === 'down' ? '▼' : deltaDir === 'up' ? '▲' : '◇';
+---
+<article class="stat-card" aria-label={`${label} stat`}>
+  <span class="bracket bracket-tl" aria-hidden="true"></span>
+  <span class="bracket bracket-tr" aria-hidden="true"></span>
+  <span class="bracket bracket-bl" aria-hidden="true"></span>
+  <span class="bracket bracket-br" aria-hidden="true"></span>
+
+  <div class="label">{label}</div>
+
+  <div class="value-row">
+    <span class="value">{value}</span>
+    {unit && <span class="unit">{unit}</span>}
+  </div>
+
+  {sparkline && (
+    <span class="sparkline" aria-label={sparkline.ariaLabel}>{sparkline.glyphs}</span>
+  )}
+
+  {topNamePages.length > 0 && (
+    <div
+      class="card-topnames"
+      aria-label={`Top names: ${topNames!.slice(0, 5).join(', ')}${topNames!.length > 5 ? ', …' : ''}`}
+      aria-live="off"
+    >
+      {topNamePages.map((pageNames, i) => (
+        <div class="topname-page" style={`animation-delay: ${i * 5000}ms`}>{pageNames.join(' · ')}</div>
+      ))}
+    </div>
+  )}
+
+  {
+    delta && (
+      <div class={`delta delta-${deltaDir}`}>
+        <span class="arrow" aria-hidden="true">{deltaGlyph}</span>
+        <span class="pct">{delta}</span>
+        <span class="vs">vs prior</span>
+      </div>
+    )
+  }
+  {
+    !delta && context && (
+      <div class="context">{context}</div>
+    )
+  }
+</article>
+
+<style>
+  .stat-card {
+    position: relative;
+    border: 1px solid var(--border);
+    background: var(--bg-panel);
+    padding: var(--space-5);
+    min-height: 8.5rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    transition: background var(--motion-fast) var(--easing);
+  }
+  .stat-card:hover {
+    background: var(--bg-elevated);
+  }
+
+  /* Corner-bracket framing (PoC lineage) */
+  .bracket {
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    border: 1px solid var(--accent);
+  }
+  .bracket-tl { top: -1px; left: -1px; border-right: 0; border-bottom: 0; }
+  .bracket-tr { top: -1px; right: -1px; border-left: 0; border-bottom: 0; }
+  .bracket-bl { bottom: -1px; left: -1px; border-right: 0; border-top: 0; }
+  .bracket-br { bottom: -1px; right: -1px; border-left: 0; border-top: 0; }
+
+  .label {
+    font-size: var(--size-sm);
+    color: var(--fg-dim); /* a11y: --muted fails WCAG AA on --bg-panel at --size-sm (3.54:1 < 4.5:1) */
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  .label::before {
+    content: '◆';
+    color: var(--accent);
+    font-size: 0.65em;
+  }
+
+  .value-row {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-2);
+    margin: var(--space-4) 0 var(--space-3);
+  }
+
+  .value {
+    font-family: var(--font-display);
+    font-size: var(--size-xl);
+    color: var(--accent);
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+  }
+
+  .unit {
+    font-size: var(--size-sm);
+    color: var(--fg-dim); /* a11y: --muted fails WCAG AA on --bg-panel at --size-sm */
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .delta {
+    font-size: var(--size-sm);
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-2);
+    color: var(--fg);
+  }
+  .delta .pct { font-weight: 600; }
+  .delta .vs { color: var(--fg-dim); text-transform: uppercase; letter-spacing: 0.08em; } /* a11y: --muted fails WCAG AA on --bg-panel at --size-sm */
+
+  .delta-up .arrow,
+  .delta-up .pct { color: var(--accent); }
+  .delta-down .arrow,
+  .delta-down .pct { color: var(--accent-dim); }
+  .delta-flat .arrow { color: var(--muted); }
+  .delta-flat .pct { color: var(--fg-dim); }
+
+  .context {
+    font-size: var(--size-sm);
+    color: var(--fg-dim); /* a11y: --muted fails WCAG AA on --bg-panel at --size-sm */
+    letter-spacing: 0.02em;
+  }
+
+  /* S025: sparkline glyph row */
+  .sparkline {
+    font-family: var(--font-mono, monospace);
+    font-size: var(--size-sm);
+    color: var(--fg-dim);
+    letter-spacing: 0.05em;
+    line-height: 1;
+    display: block;
+  }
+
+  /* S050 β: 4-page fade-cycling top-names slot. Page count is fixed at 4 so
+     the @keyframes percentages match exactly — at any moment exactly one page
+     is visible. Names within a page are joined with ' · ' separators and
+     ellipsize at card width. */
+  .card-topnames {
+    position: relative;
+    height: 1.2em;
+    font-family: var(--font-mono);
+    font-size: var(--size-sm);
+    color: var(--fg-dim);
+    overflow: hidden;
+    margin-top: var(--space-2);
+  }
+  .card-topnames .topname-page {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  /* Show first page statically by default (covers reduced-motion and no-JS cases). */
+  .card-topnames .topname-page:first-child { opacity: 1; }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .card-topnames .topname-page {
+      animation: topname-page-cycle 20s infinite;
+    }
+    /* Animation drives the first page too once it's permitted. */
+    .card-topnames .topname-page:first-child { opacity: 0; }
+  }
+
+  /* 4 pages × 25% slot each. Visible 1%-22% of cycle (~4.2s out of 20s);
+     fade in 0-1%, hold 1-22%, fade out 22-25%. Per-page delay = i × 5000ms
+     (= i × 25% of cycle), so each page occupies its own quarter with brief
+     crossfade at boundaries. */
+  @keyframes topname-page-cycle {
+    0%        { opacity: 0; transform: translateY(2px); }
+    1%, 22%   { opacity: 1; transform: translateY(0); }
+    25%, 100% { opacity: 0; transform: translateY(-2px); }
+  }
+</style>

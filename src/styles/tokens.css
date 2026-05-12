@@ -1,0 +1,125 @@
+/* ============================================================
+ * AgenticOS — Design Tokens
+ * ------------------------------------------------------------
+ * Single source of truth for colour, type, space, and rhythm.
+ * Aesthetic: terminal first, dashboard second.
+ *   - Dark canvas, single amber accent.
+ *   - Monospace primary, never a system sans fallback alone.
+ *   - Hairline borders (1px), no shadows, no gradients, no
+ *     rounded corners by default.
+ *   - Tabular numerals always-on so every number column aligns.
+ *
+ * Lineage:
+ *   - Wickstrom "Monospace Web" (2024)
+ *   - Vercel Ship 2025 (corner brackets, dotted margins)
+ *   - nanoGPT / Karpathy researcher-aesthetic
+ * ============================================================ */
+
+:root {
+  /* --- Surface & ink ----------------------------------------
+   * Near-black background graded in three steps so panels can
+   * sit on the canvas without resorting to shadow.
+   */
+  --bg:           #0A0A0A;   /* page canvas                   */
+  --bg-panel:    #111111;   /* primary panel / card           */
+  --bg-elevated: #161616;   /* hover / focused panel          */
+  --fg:           #E6E6E6;   /* primary text                  */
+  --fg-dim:      #9A9A9A;   /* secondary text                 */
+  --muted:        #6B6B6B;   /* tertiary text, meta, labels   */
+
+  /* --- Borders ----------------------------------------------
+   * Hairline by default. `border-strong` only for table
+   * dividers and stat-card outer frames.
+   */
+  --border:        #2A2A2A;
+  --border-strong: #3A3A3A;
+  --border-accent: #FF6A00;
+
+  /* --- Accent (orange / amber) ------------------------------
+   * One accent. Used for active values, focus rings, the
+   * usage-chart line, and the "online" pulse.
+   * `accent-dim` is the same hue at ~55% luminance for
+   * inactive states (declined deltas, secondary buttons).
+   */
+  --accent:     #FF6A00;
+  --accent-dim: #B24A00;
+  --accent-ink: #0A0A0A;     /* text on filled accent surfaces */
+
+  /* --- Status ----------------------------------------------
+   * Status colours stay desaturated so the orange accent
+   * remains the loudest thing on the page.
+   */
+  --success: #6FBF73;
+  --warn:    #E8B339;
+  --danger:  #E5484D;
+  --info:    #5AA9E6;
+
+  /* --- Typography ------------------------------------------
+   * Primary face is monospace. `font-display` is a stylistic
+   * variant for big stat values (still mono, slightly tighter
+   * tracking). Body never falls back to a proportional sans.
+   */
+  --font-mono:    "Fira Code", "JetBrains Mono", "Geist Mono",
+                  ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --font-display: "Berkeley Mono", "JetBrains Mono",
+                  "Fira Code", ui-monospace, monospace;
+
+  /* --- Type ramp -------------------------------------------
+   * Four sizes total. Page-level rule: max 3 sizes per page.
+   * Allowed combinations are documented in docs/design-system.md.
+   */
+  --size-sm: 0.75rem;   /* 12px — meta, table cells, labels   */
+  --size-md: 0.875rem;  /* 14px — body, log feed, nav         */
+  --size-lg: 1.125rem;  /* 18px — section headings            */
+  --size-xl: 2.25rem;   /* 36px — stat-card values, hero      */
+
+  /* --- Line height ----------------------------------------- */
+  --leading-tight: 1.15;
+  --leading-base:  1.45;
+
+  /* --- Spacing scale ---------------------------------------
+   * 4px base unit. Six steps cover every layout we need;
+   * components compose multiples rather than inventing
+   * new values.
+   */
+  --space-1: 0.25rem;   /* 4px  */
+  --space-2: 0.5rem;    /* 8px  */
+  --space-3: 0.75rem;   /* 12px */
+  --space-4: 1rem;      /* 16px */
+  --space-5: 1.5rem;    /* 24px */
+  --space-6: 2rem;      /* 32px */
+
+  /* --- Layout ----------------------------------------------- */
+  --content-max:    80ch;
+  --grid-gutter:    var(--space-5);
+  --border-width:   1px;
+  --border-radius:  0;       /* sharp corners by default       */
+
+  /* --- Motion ----------------------------------------------- */
+  --motion-fast: 120ms;
+  --motion-base: 200ms;
+  --easing:      cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  /* --- Numerals ---------------------------------------------
+   * Critical for stat cards, usage tables, and the log feed.
+   * Every digit column aligns across rows.
+   */
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+/* ------------------------------------------------------------
+ * Base element styling consumes the tokens above. The frontend
+ * agent layers components on top without redefining colours.
+ * ------------------------------------------------------------ */
+html {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: var(--size-md);
+  line-height: var(--leading-base);
+}
+
+::selection {
+  background: var(--accent);
+  color: var(--accent-ink);
+}

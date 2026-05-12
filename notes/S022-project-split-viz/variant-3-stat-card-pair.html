@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>S022 — variant 3 · stat-card pair</title>
+<style>
+  :root {
+    --bg:           #0A0A0A;
+    --bg-panel:     #111111;
+    --bg-elevated:  #161616;
+    --fg:           #E6E6E6;
+    --fg-dim:       #9A9A9A;
+    --muted:        #6B6B6B;
+    --border:       #2A2A2A;
+    --border-strong:#3A3A3A;
+    --accent:       #FF6A00;
+    --accent-dim:   #B24A00;
+    --font-mono:    "Fira Code", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+    --font-display: "Berkeley Mono", "JetBrains Mono", ui-monospace, monospace;
+    --space-1: 0.25rem;
+    --space-2: 0.5rem;
+    --space-3: 0.75rem;
+    --space-4: 1rem;
+    --space-5: 1.5rem;
+    --motion-fast: 120ms;
+    --easing: cubic-bezier(0.2, 0.8, 0.2, 1);
+    font-variant-numeric: tabular-nums lining-nums;
+  }
+  html, body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-mono);
+    font-size: 14px;
+    line-height: 1.45;
+    margin: 0;
+    padding: var(--space-5);
+  }
+  .variant-header {
+    color: var(--muted);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    margin-bottom: var(--space-5);
+    border-bottom: 1px dotted var(--border);
+    padding-bottom: var(--space-3);
+  }
+  .variant-header em { color: var(--accent); font-style: normal; }
+  .stage { max-width: 480px; }
+
+  /* pair container = same outer footprint as a single StatCard slot in the grid */
+  .pair {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0;                /* no gap: the two cards share their inner border */
+  }
+
+  /* base card mimics StatCard.astro */
+  .stat-card {
+    position: relative;
+    border: 1px solid var(--border);
+    background: var(--bg-panel);
+    padding: var(--space-4) var(--space-5);
+    min-height: 8.5rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    transition: background var(--motion-fast) var(--easing);
+  }
+  .stat-card:hover { background: var(--bg-elevated); }
+  /* collapse the shared interior border */
+  .stat-card + .stat-card { border-left: 0; }
+
+  /* corner brackets — only on the outer corners of the pair */
+  .bracket {
+    position: absolute;
+    width: 10px; height: 10px;
+    border: 1px solid var(--accent);
+  }
+  .bracket-tl { top: -1px; left: -1px;  border-right: 0; border-bottom: 0; }
+  .bracket-bl { bottom: -1px; left: -1px;  border-right: 0; border-top: 0; }
+  .bracket-tr { top: -1px; right: -1px; border-left: 0;  border-bottom: 0; }
+  .bracket-br { bottom: -1px; right: -1px; border-left: 0;  border-top: 0; }
+
+  .label {
+    font-size: 12px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    display: flex; align-items: center; gap: var(--space-2);
+  }
+  .label::before {
+    content: '◆';
+    color: var(--accent);
+    font-size: 0.65em;
+  }
+  .stat-card.personal .label::before { color: var(--accent-dim); }
+
+  .value-row {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-2);
+    margin: var(--space-3) 0 var(--space-2);
+  }
+  .value {
+    font-family: var(--font-display);
+    font-size: 36px;
+    color: var(--accent);
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+  }
+  .stat-card.personal .value { color: var(--accent-dim); }
+  .of-total {
+    font-size: 12px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .of-total .slash { color: var(--border-strong); margin: 0 4px; }
+
+  .pct-bar {
+    height: 2px;
+    background: var(--bg);
+    margin-top: var(--space-3);
+    border: 1px solid var(--border);
+    border-left: 0; border-right: 0;
+    position: relative;
+    overflow: hidden;
+  }
+  .pct-bar .fill {
+    position: absolute; top: 0; bottom: 0; left: 0;
+    background: var(--accent);
+  }
+  .stat-card.personal .pct-bar .fill { background: var(--accent-dim); }
+
+  .pct-text {
+    font-size: 12px;
+    margin-top: var(--space-2);
+    color: var(--fg-dim);
+    display: flex;
+    justify-content: space-between;
+    letter-spacing: 0.04em;
+  }
+  .pct-text .pct {
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .stat-card.personal .pct-text .pct { color: var(--accent-dim); }
+</style>
+</head>
+<body>
+<header class="variant-header">VARIANT 3 · <em>STAT-CARD PAIR</em> — two side-by-side mini cards replacing the PROJECTS slot</header>
+
+<div class="stage">
+  <div class="pair" aria-label="Project split: work vs personal">
+    <article class="stat-card work" aria-label="Work projects">
+      <span class="bracket bracket-tl" aria-hidden="true"></span>
+      <span class="bracket bracket-bl" aria-hidden="true"></span>
+      <div class="label">WORK</div>
+      <div class="value-row">
+        <span class="value">26</span>
+        <span class="of-total"><span class="slash">/</span>33</span>
+      </div>
+      <div class="pct-bar"><span class="fill" style="width: 78.78787879%;"></span></div>
+      <div class="pct-text"><span>share</span><span class="pct">78.8%</span></div>
+    </article>
+
+    <article class="stat-card personal" aria-label="Personal projects">
+      <span class="bracket bracket-tr" aria-hidden="true"></span>
+      <span class="bracket bracket-br" aria-hidden="true"></span>
+      <div class="label">PERSONAL</div>
+      <div class="value-row">
+        <span class="value">7</span>
+        <span class="of-total"><span class="slash">/</span>33</span>
+      </div>
+      <div class="pct-bar"><span class="fill" style="width: 21.21212121%;"></span></div>
+      <div class="pct-text"><span>share</span><span class="pct">21.2%</span></div>
+    </article>
+  </div>
+</div>
+</body>
+</html>

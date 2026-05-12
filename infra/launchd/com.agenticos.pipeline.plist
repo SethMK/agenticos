@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.agenticos.pipeline</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/env</string>
+        <string>bash</string>
+        <string>/Users/marcinkokott/Projects/personal/202605_AgenticOS/scripts/run-pipeline-and-sync.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/marcinkokott/Projects/personal/202605_AgenticOS</string>
+
+    <key>StartInterval</key>
+    <integer>900</integer>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/marcinkokott/Projects/personal/202605_AgenticOS/logs/pipeline.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/marcinkokott/Projects/personal/202605_AgenticOS/logs/pipeline.err.log</string>
+</dict>
+</plist>

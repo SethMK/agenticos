@@ -1,0 +1,627 @@
+---
+export const prerender = true;
+/**
+ * /how-it-was-built — S047 (E02) — hybrid redesign
+ *
+ * Layout: variant D (hybrid) per the S046 spike decision.
+ *   - B-style headline stat row (6 large stat cards with corner brackets)
+ *   - A-style spine timeline (horizontal 6-epic strip)
+ *   - A-style epic chapters (vertical build-log narrative)
+ *   - A-style right sidebar (build receipt + agent-loop ASCII)
+ *
+ * Data source: data/snapshots/public.json → snapshot.pmo + snapshot.totals.
+ * No client JS. Static at build. Page weight target ≤ 50 KB gz.
+ *
+ * Heading hierarchy:
+ *   TerminalLayout renders <h1 class="sr-only">AgenticOS</h1> (S027).
+ *   This page uses <h1> for the page title.
+ *   EpicChapter.astro uses <h2> for chapter headings.
+ *   BuildReceipt.astro uses <h2> for sidebar section headings.
+ */
+import TerminalLayout from '../layouts/TerminalLayout.astro';
+import SpineTimeline from '../components/SpineTimeline.astro';
+import EpicChapter from '../components/EpicChapter.astro';
+import BuildReceipt from '../components/BuildReceipt.astro';
+import BurndownChart from '../components/BurndownChart.astro';
+import snapshot from '../../data/snapshots/public.json';
+
+// ── Type declarations ─────────────────────────────────────────────────────────
+
+interface PmoStory {
+  id: string;
+  title?: string;
+  status?: string;
+  epic?: string;
+  points?: number;
+  size?: string;
+  est_tokens_k?: number;
+  est_minutes?: number;
+}
+
+interface PmoEpic {
+  id: string;
+  title: string;
+  status: string;
+  story_count: number;
+  done_count: number;
+}
+
+interface PmoColumns {
+  backlog: string[];
+  ready: string[];
+  in_progress: string[];
+  review: string[];
+  done: string[];
+}
+
+// ── Extract snapshot data ─────────────────────────────────────────────────────
+
+const pmo = (snapshot as {
+  pmo?: {
+    columns?: PmoColumns;
+    epics?: PmoEpic[];
+    recent_stories?: PmoStory[];
+    generated_at?: string;
+  };
+  totals?: {
+    total_tokens?: number;
+    total_subscription?: number;
+    subscription_currency?: string;
+    project_tokens_total?: number;
+    project_tokens_input?: number;
+    project_tokens_output?: number;
+    [key: string]: unknown;
+  };
+}).pmo ?? {};
+
+const totals = (snapshot as {
+  totals?: {
+    total_tokens?: number;
+    project_tokens_total?: number;
+    project_tokens_input?: number;
+    project_tokens_output?: number;
+    [key: string]: unknown;
+  };
+}).totals ?? {};
+
+const columns: PmoColumns = pmo.columns ?? {
+  backlog: [],
+  ready: [],
+  in_progress: [],
+  review: [],
+  done: [],
+};
+const epics: PmoEpic[] = pmo.epics ?? [];
+const recentStories: PmoStory[] = pmo.recent_stories ?? [];
+
+// ── Headline stat calculations ────────────────────────────────────────────────
+
+const totalStories =
+  columns.backlog.length +
+  columns.ready.length +
+  columns.in_progress.length +
+  columns.review.length +
+  columns.done.length;
+
+const storiesDone = columns.done.length;
+const epicsComplete = epics.filter(
+  (e) => e.done_count === e.story_count && e.story_count > 0,
+).length;
+const epicsActive = epics.filter(
+  (e) => e.status === 'active' || (e.done_count > 0 && e.done_count < e.story_count),
+).length;
+
+// Tokens: raw number, formatted as "60.8M" / "1.2k" / raw
+// S076: use project-scoped all-time total (not global) — fail loud (0) on stale snapshot
+const rawTokens = totals.project_tokens_total ?? 0;
+function fmtTokensBig(t: number): string {
+  if (t >= 1_000_000) return `${(t / 1_000_000).toFixed(1)}M`;
+  if (t >= 1_000) return `${Math.round(t / 1000)}k`;
+  return String(t);
+}
+const tokensFmt = fmtTokensBig(rawTokens);
+// S076: subtitle split — input and output formatted separately
+const tokensInFmt = fmtTokensBig(totals.project_tokens_input ?? 0);
+const tokensOutFmt = fmtTokensBig(totals.project_tokens_output ?? 0);
+
+// Wall clock: sum est_minutes across done stories in recent_stories only
+// (older done stories in columns.done may not have est_minutes in the snapshot)
+const wallClockMin = recentStories
+  .filter((s) => s.status === 'done' && typeof s.est_minutes === 'number')
+  .reduce((acc, s) => acc + (s.est_minutes ?? 0), 0);
+
+function fmtWallClock(min: number): string {
+  if (!min) return '—';
+  if (min < 60) return `~${min}m`;
+  const h = Math.floor(min / 60);
+  const rem = min % 60;
+  return rem ? `~${h}h ${rem}m` : `~${h}h`;
+}
+const wallClockFmt = fmtWallClock(wallClockMin);
+
+// ── Story lookup ──────────────────────────────────────────────────────────────
+
+const storyById = new Map<string, PmoStory>();
+for (const s of recentStories) {
+  if (s?.id) storyById.set(s.id, s);
+}
+
+// Build status map: id → status string (from columns, authoritative)
+const storyStatus = new Map<string, string>();
+for (const id of columns.backlog)     storyStatus.set(id, 'backlog');
+for (const id of columns.ready)       storyStatus.set(id, 'ready');
+for (const id of columns.in_progress) storyStatus.set(id, 'in-progress');
+for (const id of columns.review)      storyStatus.set(id, 'review');
+for (const id of columns.done)        storyStatus.set(id, 'done');
+
+// For each epic, gather its stories from recent_stories (where epic field matches),
+// plus include any done-column IDs not in recent_stories to preserve data per acceptance bullet 2.
+// We also include all in_progress IDs belonging to this epic.
+function storiesForEpic(epicId: string): PmoStory[] {
+  const found: PmoStory[] = [];
+  const seenIds = new Set<string>();
+
+  // 1. All recent_stories that belong to this epic
+  for (const s of recentStories) {
+    if (s.epic === epicId) {
+      found.push({ ...s, status: storyStatus.get(s.id) ?? s.status });
+      seenIds.add(s.id);
+    }
+  }
+
+  // 2. Any in_progress IDs not yet in recent_stories for this epic
+  // (shouldn't happen but defensive)
+  for (const id of columns.in_progress) {
+    if (!seenIds.has(id)) {
+      const st = storyById.get(id);
+      if (st?.epic === epicId) {
+        found.push({ ...st, status: 'in-progress' });
+        seenIds.add(id);
+      }
+    }
+  }
+
+  // Sort: done first (descending id), then in-flight, then others (backlog/ready)
+  const statusOrder = (s: PmoStory) => {
+    const status = s.status;
+    if (status === 'done') return 0;
+    if (status === 'review') return 1;
+    if (status === 'in-progress') return 2;
+    if (status === 'ready') return 3;
+    return 4; // backlog
+  };
+
+  found.sort((a, b) => {
+    const so = statusOrder(a) - statusOrder(b);
+    if (so !== 0) return so;
+    // Within same status, sort by id descending (most recent first)
+    return b.id.localeCompare(a.id);
+  });
+
+  return found;
+}
+
+// ── Narrative subtitles for each epic (optional flavour from variant D mockup) ─
+const EPIC_SUBTITLES: Record<string, string> = {
+  E01: 'laying the rails before the data could move.',
+  E02: 'the page recruiters will actually open.',
+  E03: 'the parts only Marcin should see.',
+  E04: 'turning the static build into a public URL.',
+  E05: 'the second pass that separates portfolio from project.',
+  E06: 'second-pass numeracy on the numbers we already shipped.',
+};
+
+// IDs currently in flight
+const inflightIds = columns.in_progress;
+
+// ── All-IDs preservation for acceptance bullet 2 ─────────────────────────────
+// Build a complete "full kanban" list of all story IDs across all columns.
+// Stories that have an epic mapping appear in the chapter log above.
+// Stories without an epic mapping (no entry in recent_stories) still need to
+// appear in the page — they're surfaced here in a compact archive section.
+const allKanbanIds: Array<{ id: string; status: string; title?: string }> = [];
+const mappedIds = new Set<string>(recentStories.map((s) => s.id));
+
+function addIds(ids: string[], status: string) {
+  for (const id of ids) {
+    const story = storyById.get(id);
+    allKanbanIds.push({ id, status, title: story?.title });
+  }
+}
+addIds(columns.done, 'done');
+addIds(columns.in_progress, 'in-progress');
+addIds(columns.review, 'review');
+addIds(columns.ready, 'ready');
+addIds(columns.backlog, 'backlog');
+
+// IDs NOT in recent_stories (no epic mapping): need the catch-all section
+const unmappedIds = allKanbanIds.filter((s) => !mappedIds.has(s.id));
+
+// ── Section rule helper ───────────────────────────────────────────────────────
+// (rendered as static text — no component needed for a one-liner)
+---
+
+<TerminalLayout title="AGENTICOS — /how-it-was-built">
+  <div class="hiw-page" id="main-content">
+
+    <!-- 1. Page h1 + lead paragraph -->
+    <h1 class="page-title">
+      How this dashboard <span class="path">/</span> was built.
+    </h1>
+    <p class="lede">
+      Every visual on this site was shipped by an <em>orchestrator</em> pulling one kanban card
+      at a time, dispatching an <em>implementer</em> sub-agent to write the code and a
+      <em>qa-verifier</em> sub-agent to check the acceptance bullets.
+      <span class="accent">{totalStories} stories, {epics.length} epics, {storiesDone} already shipped</span> — the receipt is below.
+    </p>
+
+    <!-- 2. Headline stat row (B-style, 6 cards with corner brackets) -->
+    <section class="stat-row" aria-label="Headline build stats">
+      <span class="corner tl" aria-hidden="true"></span>
+      <span class="corner tr" aria-hidden="true"></span>
+      <span class="corner bl" aria-hidden="true"></span>
+      <span class="corner br" aria-hidden="true"></span>
+
+      <div class="stat-cell">
+        <div class="stat-k">Stories Total</div>
+        <div class="stat-v">{totalStories}</div>
+        <div class="stat-sub">across {epics.length} epics</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-k">Stories Done</div>
+        <div class="stat-v accent">{storiesDone}</div>
+        <div class="stat-sub">{Math.round((storiesDone / totalStories) * 100)}% · status:done</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-k">Epics Complete</div>
+        <div class="stat-v">{epicsComplete}</div>
+        <div class="stat-sub">{epics.filter(e => e.done_count === e.story_count && e.story_count > 0).map(e => e.id).join(' · ') || '—'}</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-k">Epics Active</div>
+        <div class="stat-v">{epicsActive}</div>
+        <div class="stat-sub">{epics.filter(e => e.status === 'active' || (e.done_count > 0 && e.done_count < e.story_count)).map(e => e.id).join(' · ') || '—'}</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-k">Tokens Burned</div>
+        <div class="stat-v">{tokensFmt}</div>
+        <div class="stat-sub">{tokensInFmt} input · {tokensOutFmt} output</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-k">Wall Clock</div>
+        <div class="stat-v">{wallClockFmt}</div>
+        <div class="stat-sub">done stories w/ actuals</div>
+      </div>
+    </section>
+
+    <!-- 3. Burndown chart (S060) — snapshot + projection -->
+    <div class="section-rule" aria-hidden="true">
+      <span class="rule-line">──────────────────────────────────────</span>
+      <span class="rule-label">quota · burnup / snapshot + projection</span>
+      <span class="rule-line">──────────────────────────────────────</span>
+    </div>
+
+    <BurndownChart />
+
+    <p class="chart-footnote">
+      Anthropic does not publish the exact Max 5x weekly token cap. The denominator uses a community-inferred estimate of ~180M tokens per week (the estimated global Max 5x budget). The projection band shows a 1.45×–1.86× bias-correction range derived from six-epic project actuals.
+    </p>
+
+    <!-- 4. Spine timeline (A-style) -->
+    <div class="section-rule" aria-hidden="true">
+      <span class="rule-line">──────────────────────────────────────</span>
+      <span class="rule-label">spine · six epics, ordered by birth</span>
+      <span class="rule-line">──────────────────────────────────────</span>
+    </div>
+
+    <SpineTimeline epics={epics} />
+
+    <!-- 4. Two-column body: chapters + sidebar -->
+    <div class="section-rule" aria-hidden="true">
+      <span class="rule-line">──────────────────────────────────────</span>
+      <span class="rule-label">chapters · the build log, epic by epic</span>
+      <span class="rule-line">──────────────────────────────────────</span>
+    </div>
+
+    <div class="body-grid">
+
+      <!-- LEFT: Epic chapters -->
+      <section class="chapters" aria-label="Build chapters, one per epic">
+        {epics.map((epic, idx) => (
+          <EpicChapter
+            epic={epic}
+            stories={storiesForEpic(epic.id)}
+            inflightIds={inflightIds}
+            chapterNum={idx + 1}
+            subtitle={EPIC_SUBTITLES[epic.id]}
+          />
+        ))}
+      </section>
+
+      <!-- RIGHT: Build receipt sidebar -->
+      <BuildReceipt
+        columns={{
+          backlog: columns.backlog.length,
+          ready: columns.ready.length,
+          in_progress: columns.in_progress.length,
+          review: columns.review.length,
+          done: columns.done.length,
+        }}
+        totalEpics={epics.length}
+      />
+
+    </div>
+
+    <!-- 5. Full kanban archive — all story IDs, preserves acceptance bullet 2.
+         Stories with epic mapping appear in their chapter above; this section
+         surfaces every ID from every column so no story is omitted. -->
+    <div class="section-rule" aria-hidden="true">
+      <span class="rule-line">──────────────────────────────────────</span>
+      <span class="rule-label">full archive · all {totalStories} stories, all columns</span>
+      <span class="rule-line">──────────────────────────────────────</span>
+    </div>
+    <section class="archive" aria-label="Full story archive">
+      <ul class="archive-list">
+        {allKanbanIds.map((s) => (
+          <li class={`arc-row arc-${s.status === 'in-progress' ? 'inflight' : s.status}`}>
+            <span class="arc-id">{s.id}</span>
+            {s.title && <span class="arc-title">{s.title}</span>}
+            <span class={`arc-badge arc-${s.status === 'in-progress' ? 'inflight' : s.status}`}>
+              {s.status === 'in-progress' ? 'flight' : s.status}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
+
+    <!-- 6. Footer -->
+    <footer class="page-foot">
+      <a class="back" href="/">← back to dashboard</a>
+      <span class="foot-meta">variant D · hybrid · S047</span>
+    </footer>
+
+  </div>
+</TerminalLayout>
+
+<style>
+  /* ── Page wrapper ─────────────────────────────────────────── */
+  .hiw-page {
+    /* Outer dotted gutters matching variant-d aesthetic */
+    position: relative;
+  }
+  .hiw-page::before,
+  .hiw-page::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 0;
+    border-left: 1px dotted var(--border);
+    pointer-events: none;
+  }
+  .hiw-page::before { left: -20px; }
+  .hiw-page::after  { right: -20px; }
+
+  /* ── Page title ───────────────────────────────────────────── */
+  .page-title {
+    margin: 0 0 8px;
+    font-family: var(--font-mono);
+    font-size: clamp(20px, 4vw, 28px);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--fg);
+    line-height: 1.18;
+  }
+  .page-title .path { color: var(--accent); }
+
+  .lede {
+    margin: 0 0 36px;
+    color: var(--fg-dim);
+    font-size: 13.5px;
+    max-width: 70ch;
+    line-height: 1.65;
+  }
+  .lede em { color: var(--fg); font-style: normal; }
+  .lede .accent { color: var(--accent); }
+
+  /* ── Burndown chart footnote ─────────────────────────────── */
+  .chart-footnote {
+    font-family: var(--font-mono);
+    color: var(--fg-dim);
+    font-size: var(--size-sm);
+    margin: 16px 0 24px;   /* clear the chart container border, then breathe */
+    line-height: 1.5;
+  }
+
+  /* ── ASCII section rules ─────────────────────────────────── */
+  .section-rule {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    font-size: 12px;
+    color: var(--border-strong);
+    line-height: 1;
+    margin: 36px 0 22px;
+    white-space: nowrap;
+    overflow: hidden;
+    user-select: none;
+  }
+  .rule-line { color: var(--border-strong); flex-shrink: 1; overflow: hidden; }
+  .rule-label {
+    color: var(--muted);
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    font-size: 10px;
+    padding: 0 12px;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  /* ── Headline stat row (B-style, 6 cells) ────────────────── */
+  .stat-row {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    border: 1px solid var(--border);
+    background: var(--bg-panel);
+    position: relative;
+    font-variant-numeric: tabular-nums lining-nums;
+    margin-bottom: 0; /* spacing handled by section-rule */
+  }
+
+  /* Corner brackets */
+  .stat-row .corner {
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    border: 1px solid var(--accent);
+    pointer-events: none;
+  }
+  .corner.tl { top: -1px;    left: -1px;   border-right: 0; border-bottom: 0; }
+  .corner.tr { top: -1px;    right: -1px;  border-left: 0;  border-bottom: 0; }
+  .corner.bl { bottom: -1px; left: -1px;   border-right: 0; border-top: 0; }
+  .corner.br { bottom: -1px; right: -1px;  border-left: 0;  border-top: 0; }
+
+  .stat-cell {
+    padding: 18px 18px 16px;
+    border-right: 1px dotted var(--border);
+  }
+  .stat-cell:last-child { border-right: 0; }
+
+  .stat-k {
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+  .stat-v {
+    font-size: 28px;
+    font-weight: 500;
+    color: var(--fg);
+    letter-spacing: -0.01em;
+    line-height: 1.1;
+    font-family: var(--font-display);
+  }
+  .stat-v.accent { color: var(--accent); }
+  .stat-sub {
+    font-size: 10px;
+    color: var(--muted);
+    margin-top: 6px;
+    letter-spacing: 0.04em;
+  }
+
+  /* ── Two-column body ─────────────────────────────────────── */
+  .body-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 300px;
+    gap: 36px;
+    margin-top: 20px;
+  }
+
+  /* ── Full archive (all story IDs) ───────────────────────── */
+  .archive {
+    margin-top: 0;
+  }
+  .archive-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    font-variant-numeric: tabular-nums lining-nums;
+  }
+  .arc-row {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    padding: 4px 8px;
+    border: 1px dotted var(--border);
+    background: var(--bg-panel);
+    font-size: 11px;
+  }
+  .arc-id {
+    color: var(--accent);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+  }
+  .arc-title {
+    color: var(--fg-dim);
+    font-size: 10px;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 24ch;
+  }
+  .arc-badge {
+    font-size: 9px;
+    letter-spacing: 0.10em;
+    text-transform: uppercase;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .arc-badge.arc-done     { color: var(--success); }
+  .arc-badge.arc-inflight { color: var(--accent); }
+  .arc-badge.arc-ready    { color: var(--warn); }
+  .arc-badge.arc-review   { color: var(--info); }
+
+  /* ── Footer ──────────────────────────────────────────────── */
+  .page-foot {
+    margin-top: 52px;
+    padding-top: 18px;
+    border-top: 1px dotted var(--border-strong);
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: 11px;
+    color: var(--muted);
+    letter-spacing: 0.10em;
+    text-transform: uppercase;
+  }
+  .back {
+    color: var(--fg-dim);
+    text-decoration: none;
+  }
+  .back:hover,
+  .back:focus-visible {
+    color: var(--accent);
+    outline: none;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .back {
+      transition: color var(--motion-fast) var(--easing);
+    }
+  }
+  .foot-meta { color: var(--muted); }
+
+  /* ── Responsive ──────────────────────────────────────────── */
+  @media (max-width: 1024px) {
+    .body-grid {
+      grid-template-columns: 1fr;
+    }
+    .stat-row {
+      grid-template-columns: repeat(3, 1fr);
+    }
+    .stat-cell {
+      border-right: 1px dotted var(--border);
+      border-bottom: 1px dotted var(--border);
+    }
+    /* Reset borders for last column and last row */
+    .stat-cell:nth-child(3n + 3) { border-right: 0; }  /* +3 because nth-child is 1-based; 3rd, 6th */
+    .stat-cell:nth-child(n + 4) { border-bottom: 0; } /* last row (cells 4-6) */
+    /* Specifically: 4th, 5th, 6th cell lose bottom border */
+    /* The above won't work cleanly; be explicit: */
+  }
+  @media (max-width: 640px) {
+    .stat-row {
+      grid-template-columns: repeat(2, 1fr);
+    }
+    .stat-cell:nth-child(2n) { border-right: 0; }
+    .stat-cell:nth-child(n + 5) { border-bottom: 0; }
+    .page-title { font-size: 20px; }
+    .hiw-page::before,
+    .hiw-page::after { display: none; }
+  }
+</style>

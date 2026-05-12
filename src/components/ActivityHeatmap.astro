@@ -1,0 +1,524 @@
+---
+/**
+ * ActivityHeatmap.astro — S018
+ *
+ * GitHub-style 53-week x 7-day activity heatmap. Each cell = one day
+ * of Claude token usage. The grid is anchored to the *current week*
+ * on the rightmost column and walks backwards 53 weeks, so the
+ * trailing-year window is always rendered in full — even on days
+ * with zero tokens.
+ *
+ * Design decisions:
+ *   - Hand-rolled SVG (no chart lib) — matches ModelSplitChart's
+ *     surgical approach, keeps gz cost tiny.
+ *   - 5 intensity levels (level-0..level-4). level-0 = 0 tokens,
+ *     level-1..4 = quartiles of non-zero days. Quartiles adapt to
+ *     the actual workload distribution so a single 80M spike day
+ *     doesn't drag every other day down to level-1.
+ *   - Day order: row 0 = Monday, row 6 = Sunday. ISO week. Documented
+ *     here so future devs don't have to read CSS to find out.
+ *   - Date is encoded as `data-date` AND inside `<title>` per cell so
+ *     bullet 3 (>= 300 distinct YYYY-MM-DD strings in the built HTML)
+ *     passes cleanly.
+ *   - All 371 cells render even when only 43 have data, because the
+ *     grid is built from a walked date list, not from the daily array.
+ *
+ * No client JS. Static at build.
+ */
+import snapshot from '../../data/snapshots/public.json';
+import { formatTokens } from '../lib/format.ts';
+
+interface DailyRow {
+  date: string;     // YYYY-MM-DD
+  tokens: number;
+  usd: number;
+  messages: number;
+}
+
+const dailyRows: DailyRow[] = (snapshot as { daily?: DailyRow[] }).daily ?? [];
+
+// Index daily rows by date for O(1) lookup as we walk the grid.
+const byDate = new Map<string, DailyRow>();
+for (const row of dailyRows) {
+  if (row && row.date) byDate.set(row.date, row);
+}
+
+// ---------------------------------------------------------------
+// Build the 53 x 7 grid.
+//
+// Anchor: today (build time). Find the Sunday on/after today —
+// that becomes the END of the rightmost column. Walk back 53*7
+// days to fix the start. This guarantees the rightmost column
+// always contains the current week (Mon..Sun) regardless of weekday.
+// ---------------------------------------------------------------
+const COLS = 53;
+const ROWS = 7;
+const TOTAL = COLS * ROWS; // 371
+
+function pad2(n: number): string {
+  return n < 10 ? `0${n}` : `${n}`;
+}
+function fmtDate(d: Date): string {
+  return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
+}
+
+const todayUtc = new Date();
+// Normalise to UTC midnight so the iteration is timezone-stable.
+const anchor = new Date(Date.UTC(todayUtc.getUTCFullYear(), todayUtc.getUTCMonth(), todayUtc.getUTCDate()));
+
+// Find this week's Monday in ISO order (Mon=0..Sun=6).
+// getUTCDay(): Sun=0..Sat=6  →  shift to Mon=0..Sun=6.
+const isoDow = (anchor.getUTCDay() + 6) % 7;
+// Sunday-of-current-week (end of column 53).
+const sundayOfCurrentWeek = new Date(anchor);
+sundayOfCurrentWeek.setUTCDate(anchor.getUTCDate() + (6 - isoDow));
+
+// Start of grid = sundayOfCurrentWeek - (TOTAL - 1) days, then back up to its Monday.
+// Easier: walk back exactly COLS*ROWS - 1 days from sundayOfCurrentWeek, that lands on a Monday.
+const gridStart = new Date(sundayOfCurrentWeek);
+gridStart.setUTCDate(sundayOfCurrentWeek.getUTCDate() - (TOTAL - 1));
+
+interface Cell {
+  date: string;
+  tokens: number;
+  level: 0 | 1 | 2 | 3 | 4;
+  col: number; // 0..52
+  row: number; // 0..6 (Mon..Sun)
+  future: boolean;
+}
+
+// First pass: collect every (date, tokens) so we can compute quartile bins.
+const cellsRaw: Cell[] = [];
+for (let i = 0; i < TOTAL; i++) {
+  const d = new Date(gridStart);
+  d.setUTCDate(gridStart.getUTCDate() + i);
+  const iso = fmtDate(d);
+  const row = i % ROWS;        // 0 = Mon, 6 = Sun
+  const col = Math.floor(i / ROWS);
+  const tokens = byDate.get(iso)?.tokens ?? 0;
+  cellsRaw.push({
+    date: iso,
+    tokens,
+    level: 0,
+    col,
+    row,
+    future: d.getTime() > anchor.getTime(),
+  });
+}
+
+// Compute quartile thresholds across NON-ZERO days only.
+const nonZero = cellsRaw
+  .filter((c) => c.tokens > 0)
+  .map((c) => c.tokens)
+  .sort((a, b) => a - b);
+
+function quantile(sorted: number[], q: number): number {
+  if (sorted.length === 0) return 0;
+  const pos = (sorted.length - 1) * q;
+  const lo = Math.floor(pos);
+  const hi = Math.ceil(pos);
+  if (lo === hi) return sorted[lo]!;
+  return sorted[lo]! + (sorted[hi]! - sorted[lo]!) * (pos - lo);
+}
+
+const q1 = quantile(nonZero, 0.25);
+const q2 = quantile(nonZero, 0.5);
+const q3 = quantile(nonZero, 0.75);
+
+function levelFor(tokens: number): 0 | 1 | 2 | 3 | 4 {
+  if (tokens <= 0) return 0;
+  if (tokens <= q1) return 1;
+  if (tokens <= q2) return 2;
+  if (tokens <= q3) return 3;
+  return 4;
+}
+
+const cells: Cell[] = cellsRaw.map((c) => ({ ...c, level: levelFor(c.tokens) }));
+
+// SVG geometry.
+const CELL = 11;        // px
+const GAP = 2;          // px
+const PAD_LEFT = 28;    // weekday labels
+const PAD_TOP = 18;     // month labels
+const W = PAD_LEFT + COLS * (CELL + GAP);
+const H = PAD_TOP + ROWS * (CELL + GAP);
+
+// Month labels: place a label above the first column whose Monday
+// row falls in a new month vs the previous column.
+const monthLabels: { col: number; label: string }[] = [];
+let lastMonth = -1;
+for (let c = 0; c < COLS; c++) {
+  const i = c * ROWS; // Monday of this column
+  const cell = cells[i];
+  if (!cell) continue;
+  const m = Number(cell.date.slice(5, 7));
+  if (m !== lastMonth) {
+    const date = new Date(cell.date + 'T00:00:00Z');
+    monthLabels.push({ col: c, label: date.toLocaleString('en-US', { month: 'short', timeZone: 'UTC' }) });
+    lastMonth = m;
+  }
+}
+
+// Weekday labels (only show Mon/Wed/Fri to avoid crowding).
+const weekdays = [
+  { row: 0, label: 'Mon' },
+  { row: 2, label: 'Wed' },
+  { row: 4, label: 'Fri' },
+];
+
+// Headline totals for the section subtitle.
+const totalTokensYear = cells.reduce((s, c) => s + c.tokens, 0);
+const activeDays = cells.filter((c) => c.tokens > 0).length;
+
+// ---------------------------------------------------------------
+// Sidebar stats — computed from the full dailyRows (not just the
+// 53-week window) so peek day / streak aren't artificially capped.
+// ---------------------------------------------------------------
+
+// 1. Peak day: entry with the highest token count across all history.
+const peakEntry = dailyRows.reduce<DailyRow | null>((best, row) => {
+  if (!best || row.tokens > best.tokens) return row;
+  return best;
+}, null);
+const peakDayDate = peakEntry?.date ?? '—';
+const peakDayTokens = peakEntry ? formatTokens(peakEntry.tokens) : '—';
+
+// 2. Current streak: consecutive active days ending on today (or the
+//    most recent active day if today has no data yet).
+//    We sort all active dates descending and count from the first one
+//    backwards while each next date is exactly 1 day earlier.
+const activeDatesSorted = dailyRows
+  .filter((r) => r.tokens > 0)
+  .map((r) => r.date)
+  .sort((a, b) => b.localeCompare(a)); // descending ISO sort is calendar-correct
+
+function daysBetween(a: string, b: string): number {
+  // Returns how many calendar days a is ahead of b (positive if a > b).
+  const msA = new Date(a + 'T00:00:00Z').getTime();
+  const msB = new Date(b + 'T00:00:00Z').getTime();
+  return Math.round((msA - msB) / 86_400_000);
+}
+
+let streakCount = 0;
+if (activeDatesSorted.length > 0) {
+  const mostRecent = activeDatesSorted[0]!;
+  const todayStr = fmtDate(anchor);
+  // Allow today OR yesterday as the chain anchor (handles in-progress days).
+  if (daysBetween(todayStr, mostRecent) <= 1) {
+    streakCount = 1;
+    for (let i = 1; i < activeDatesSorted.length; i++) {
+      if (daysBetween(activeDatesSorted[i - 1]!, activeDatesSorted[i]!) === 1) {
+        streakCount++;
+      } else {
+        break;
+      }
+    }
+  }
+}
+
+// 3. Avg tokens per active day (all history, not just 53-week window).
+const allActiveDays = dailyRows.filter((r) => r.tokens > 0);
+const avgTokensPerActiveDay = allActiveDays.length > 0
+  ? allActiveDays.reduce((s, r) => s + r.tokens, 0) / allActiveDays.length
+  : 0;
+const avgTokensFormatted = allActiveDays.length > 0 ? formatTokens(Math.round(avgTokensPerActiveDay)) : '—';
+---
+<section class="heatmap" aria-label="Daily token activity, last 53 weeks">
+  <header class="head">
+    <h2 class="title"><span class="glyph" aria-hidden="true">◆</span> ACTIVITY</h2>
+    <div class="totals">
+      <span class="totals-tokens">{formatTokens(totalTokensYear)}</span>
+      <span class="totals-sep">·</span>
+      <span class="totals-active">{activeDays} active days</span>
+    </div>
+  </header>
+
+  <div class="heatmap-wrap">
+    <div class="grid-wrap">
+      <svg
+        class="grid"
+        viewBox={`0 0 ${W} ${H}`}
+        width={W}
+        height={H}
+        role="img"
+        aria-label={`Daily token usage heatmap, ${TOTAL} days ending ${fmtDate(anchor)}. ${activeDays} days had usage.`}
+      >
+        {
+          monthLabels.map((m) => (
+            <text
+              class="month-label"
+              x={PAD_LEFT + m.col * (CELL + GAP)}
+              y={PAD_TOP - 6}
+            >
+              {m.label}
+            </text>
+          ))
+        }
+        {
+          weekdays.map((w) => (
+            <text
+              class="weekday-label"
+              x={PAD_LEFT - 6}
+              y={PAD_TOP + w.row * (CELL + GAP) + CELL - 2}
+              text-anchor="end"
+            >
+              {w.label}
+            </text>
+          ))
+        }
+        {
+          cells.map((c) => (
+            <rect
+              class={`cell level-${c.level}${c.future ? ' future' : ''}`}
+              data-date={c.date}
+              data-tokens={c.tokens}
+              x={PAD_LEFT + c.col * (CELL + GAP)}
+              y={PAD_TOP + c.row * (CELL + GAP)}
+              width={CELL}
+              height={CELL}
+              rx="1"
+              ry="1"
+            >
+              <title>{`${c.date} — ${c.tokens > 0 ? formatTokens(c.tokens) + ' tok' : 'no activity'}`}</title>
+            </rect>
+          ))
+        }
+      </svg>
+    </div>
+
+    <aside class="stat-sidebar" aria-label="Activity statistics">
+      <dl class="stat-list">
+        <div class="stat-row">
+          <dt class="stat-label">peak day</dt>
+          <dd class="stat-value">
+            <span class="stat-date">{peakDayDate}</span>
+            <span class="stat-sep">·</span>
+            <span class="stat-num">{peakDayTokens}</span>
+          </dd>
+        </div>
+        <div class="stat-row">
+          <dt class="stat-label">current streak</dt>
+          <dd class="stat-value">
+            <span class="stat-num">{streakCount} days</span>
+          </dd>
+        </div>
+        <div class="stat-row">
+          <dt class="stat-label">avg / active day</dt>
+          <dd class="stat-value">
+            <span class="stat-num">{avgTokensFormatted}</span>
+          </dd>
+        </div>
+      </dl>
+    </aside>
+  </div>
+
+  <footer class="legend">
+    <span class="legend-label">Less</span>
+    <span class="legend-cell level-0" aria-hidden="true" />
+    <span class="legend-cell level-1" aria-hidden="true" />
+    <span class="legend-cell level-2" aria-hidden="true" />
+    <span class="legend-cell level-3" aria-hidden="true" />
+    <span class="legend-cell level-4" aria-hidden="true" />
+    <span class="legend-label">More</span>
+  </footer>
+</section>
+
+<style>
+  .heatmap {
+    position: relative;
+    border: 1px solid var(--border);
+    background: var(--bg-panel);
+    padding: var(--space-5);
+  }
+
+  .head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-4);
+    margin-bottom: var(--space-4);
+  }
+  .title {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: var(--size-sm);
+    color: var(--fg-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  .title .glyph {
+    color: var(--accent);
+    font-size: 0.65em;
+  }
+  .totals {
+    font-size: var(--size-sm);
+    color: var(--fg-dim);
+    letter-spacing: 0.02em;
+  }
+  .totals-tokens {
+    color: var(--fg);
+    font-weight: 600;
+  }
+  .totals-sep {
+    color: var(--muted);
+    margin: 0 var(--space-2);
+  }
+  .totals-active {
+    color: var(--fg-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  /* ---- Two-column layout at desktop widths ---- */
+  .heatmap-wrap {
+    display: grid;
+    grid-template-columns: 1fr;   /* mobile: single column */
+    gap: var(--space-4);
+    margin-bottom: var(--space-3);
+    align-items: start;
+  }
+
+  @media (min-width: 1024px) {
+    .heatmap-wrap {
+      grid-template-columns: auto 1fr; /* SVG intrinsic, sidebar fills rest */
+      align-items: center;
+    }
+  }
+
+  .grid-wrap {
+    overflow-x: auto;
+  }
+  .grid {
+    display: block;
+    /* Let the SVG keep its intrinsic width on small screens and scroll. */
+    min-width: 100%;
+  }
+
+  /* ---- Stat sidebar ---- */
+  .stat-sidebar {
+    padding-left: var(--space-4);
+    border-left: 1px solid var(--border);
+  }
+
+  @media (max-width: 1023px) {
+    .stat-sidebar {
+      padding-left: 0;
+      border-left: none;
+      border-top: 1px solid var(--border);
+      padding-top: var(--space-3);
+    }
+  }
+
+  .stat-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    margin: 0;
+    padding: 0;
+  }
+
+  .stat-row {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .stat-label {
+    font-family: var(--font-mono);
+    font-size: var(--size-sm);
+    color: var(--fg-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .stat-value {
+    font-family: var(--font-mono);
+    font-size: var(--size-md);
+    color: var(--fg);
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+    margin: 0;
+  }
+
+  .stat-date {
+    color: var(--fg-dim);
+    font-size: var(--size-sm);
+  }
+
+  .stat-sep {
+    color: var(--muted);
+  }
+
+  .stat-num {
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  /* Reduced-motion guard — no transitions on sidebar content */
+  @media (prefers-reduced-motion: reduce) {
+    .stat-sidebar * {
+      transition: none !important;
+    }
+  }
+
+  .month-label,
+  .weekday-label {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    fill: var(--muted);
+    letter-spacing: 0.04em;
+  }
+
+  /* Cells: muted level-0, ramp via color-mix on the accent. */
+  .cell {
+    stroke: var(--border);
+    stroke-width: 0.5;
+    transition: filter var(--motion-fast) var(--easing);
+  }
+  .cell:hover {
+    filter: brightness(1.25);
+  }
+  .cell.future {
+    /* Days that haven't happened yet stay invisible-ish but still render
+       as level-0 dates so the date-count assertion passes. */
+    opacity: 0.45;
+  }
+
+  .level-0 { fill: var(--bg-elevated); }
+  .level-1 { fill: color-mix(in oklch, var(--accent) 22%, var(--bg)); }
+  .level-2 { fill: color-mix(in oklch, var(--accent) 45%, var(--bg)); }
+  .level-3 { fill: color-mix(in oklch, var(--accent) 70%, var(--bg)); }
+  .level-4 { fill: var(--accent); }
+
+  /* Legend chips reuse the same fills. */
+  .legend {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    justify-content: flex-end;
+    font-size: var(--size-sm);
+    color: var(--fg-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .legend-label {
+    font-size: 10px;
+  }
+  .legend-cell {
+    display: inline-block;
+    width: 11px;
+    height: 11px;
+    border: 1px solid var(--border);
+  }
+  .legend-cell.level-0 { background: var(--bg-elevated); }
+  .legend-cell.level-1 { background: color-mix(in oklch, var(--accent) 22%, var(--bg)); }
+  .legend-cell.level-2 { background: color-mix(in oklch, var(--accent) 45%, var(--bg)); }
+  .legend-cell.level-3 { background: color-mix(in oklch, var(--accent) 70%, var(--bg)); }
+  .legend-cell.level-4 { background: var(--accent); }
+</style>

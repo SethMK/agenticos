@@ -1,0 +1,191 @@
+---
+/**
+ * TerminalLayout.astro — base shell for every AgenticOS public page.
+ *
+ * - Imports the locked design tokens (S006).
+ * - Sets the dark canvas and monospace family at the body level.
+ * - Renders a header strip: AGENTICOS wordmark + version/host label.
+ * - Provides a <slot /> for page content.
+ *
+ * Visual language follows the frontend-design PoC at
+ * notes/design-skill-poc/frontend-design/layout.html.
+ */
+import '../styles/tokens.css';
+
+interface Props {
+  title?: string;
+}
+
+const { title = 'AGENTICOS' } = Astro.props;
+---
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to main content</a>
+
+    <div class="shell">
+      <h1 class="sr-only">AgenticOS</h1>
+
+      <header class="brand">
+        <div class="wordmark">
+          AGENTICOS<span class="slash">/</span><span class="path">root</span>
+        </div>
+        <nav class="brand-nav" aria-label="Site sections">
+          <a href="/how-it-was-built" class="nav-link">how-it-was-built <span aria-hidden="true">→</span></a>
+        </nav>
+        <div class="brand-meta">v0.1 &middot; self-hosted</div>
+      </header>
+
+      <slot />
+    </div>
+
+    <style>
+      /* Skip-link: visually hidden by default, revealed on focus */
+      .skip-link {
+        position: fixed;
+        top: var(--space-3);
+        left: var(--space-3);
+        transform: translateY(-200%);
+        z-index: 9999;
+        padding: var(--space-2) var(--space-4);
+        background: var(--bg-panel);
+        color: var(--accent);
+        font-family: var(--font-mono);
+        font-size: var(--size-sm);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        text-decoration: none;
+        border: 1px solid var(--accent);
+        outline: none;
+        transition: transform var(--motion-fast) var(--easing);
+      }
+      .skip-link:focus,
+      .skip-link:focus-visible {
+        transform: translateY(0);
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+
+      /* Visually hidden — screen readers see it, sighted users don't */
+      .sr-only {
+        clip-path: inset(50%);
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        white-space: nowrap;
+      }
+
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font-family: var(--font-mono);
+        font-size: var(--size-md);
+        line-height: var(--leading-base);
+        min-height: 100vh;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+
+      .shell {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: var(--space-6);
+      }
+
+      .brand {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-end;
+        padding-bottom: var(--space-4);
+        border-bottom: 1px dotted var(--border-strong);
+        margin-bottom: var(--space-6);
+      }
+
+      .wordmark {
+        font-family: var(--font-display);
+        font-size: 2.25rem;
+        font-weight: 700;
+        color: var(--accent);
+        letter-spacing: 0.04em;
+        line-height: 1;
+      }
+
+      .wordmark .slash {
+        color: var(--muted);
+        margin: 0 0.4ch;
+      }
+
+      .wordmark .path {
+        color: var(--fg-dim);
+        font-weight: 400;
+      }
+
+      .brand-meta {
+        color: var(--fg-dim);
+        font-size: var(--size-sm);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      .brand-nav {
+        margin-left: auto;
+        display: flex;
+        align-items: flex-end;
+        padding-right: var(--space-6);
+      }
+
+      .nav-link {
+        font-family: var(--font-mono);
+        font-size: var(--size-sm);
+        color: var(--fg-dim);
+        letter-spacing: 0.04em;
+        text-decoration: none;
+        transition: color var(--motion-fast) var(--easing);
+      }
+
+      .nav-link:hover {
+        color: var(--accent);
+      }
+
+      .nav-link:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .nav-link {
+          transition: none;
+        }
+      }
+
+      @media (max-width: 640px) {
+        .wordmark {
+          font-size: 1.5rem;
+        }
+        .shell {
+          padding: var(--space-4);
+        }
+        .brand-meta {
+          display: none;
+        }
+        .brand-nav {
+          padding-right: 0;
+        }
+      }
+    </style>
+  </body>
+</html>

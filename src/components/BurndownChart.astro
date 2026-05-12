@@ -1,0 +1,666 @@
+---
+/**
+ * BurndownChart.astro — S060
+ *
+ * Snapshot-plus-projection burnup chart for /how-it-was-built.
+ *
+ * Visual: "speedometer that also shows where you're headed."
+ *   - Filled area: consumed budget so far (0 → current_pct)
+ *   - Dashed projection line: from current point to scope ceiling
+ *   - Projection band: 1.45× (lower) – 1.86× (upper) bias-corrected
+ *     remaining-backlog estimate shaded around the dashed line
+ *   - Ceiling line: dashed horizontal at 100% / 180M tokens / 1.0 week
+ *   - "Now" marker: vertical dotted line + dot at current cumulative position
+ *
+ * Axes (HTML overlays, not SVG <text> — avoids S068/S069 stretch bug):
+ *   Left Y:  tokens  (0 / 60M / 120M / 180M)
+ *   Right Y: weeks-of-Max (0.0 / 0.5 / 1.0 / 1.2 ceiling)
+ *   X:       conceptual story arc — "start" (left) / "scope ceiling" (right)
+ *
+ * Constraints:
+ *   - preserveAspectRatio="xMidYMid meet" — never "none" (S069 bug)
+ *   - Zero client JS (server-render only)
+ *   - <title> tooltips on filled area + projection (S048/S049 contract)
+ *   - Animation wrapped in @media (prefers-reduced-motion: no-preference)
+ *   - Data exclusively from public.json totals fields — no hardcoded counts
+ */
+import snapshot from '../../data/snapshots/public.json';
+
+// ── Data extraction — project-scoped quota fields ──────────────────────────
+const { totals: _totals, generated_at: generatedAt } = snapshot as {
+  generated_at?: string;
+  totals?: {
+    weekly_quota_project_used_k?: number;
+    weekly_quota_project_total_k?: number;
+    weekly_quota_project_pct?: number;
+    weekly_reset_at?: string;
+    [key: string]: unknown;
+  };
+};
+const totals = _totals ?? {};
+
+const usedK: number   = (totals.weekly_quota_project_used_k as number)   ?? 0;
+const totalK: number  = (totals.weekly_quota_project_total_k as number)   ?? 180_000;
+const pctRaw: number  = (totals.weekly_quota_project_pct as number)       ?? 0;
+
+// Convert k-tokens → raw tokens for axis formatting
+const usedTokens  = usedK  * 1_000;
+const totalTokens = totalK * 1_000;
+
+// Projection: current fraction already consumed
+const currentFrac = Math.min(pctRaw / 100, 1.0);  // clamp to 1.0 for rendering
+
+// Remaining fraction (of full ceiling)
+const remainingFrac = Math.max(0, 1.0 - currentFrac);
+
+// Bias-corrected projection band endpoints (as fraction of full ceiling)
+// Lower: 1.45× remaining added to current consumption
+// Upper: 1.86× remaining added to current consumption
+const projLower = Math.min(currentFrac + remainingFrac * 1.45, 1.4);
+const projUpper = Math.min(currentFrac + remainingFrac * 1.86, 1.4);
+
+// ── Left Y-axis token ticks (0 / ⅓ / ⅔ / full ceiling) ──────────────────
+// Derived from totalTokens so the axis is always project-calibrated.
+function fmtTokenAxis(n: number): string {
+  if (n === 0) return '0';
+  if (n >= 1_000_000) return `${Math.round(n / 1_000_000)}M`;
+  if (n >= 1_000)     return `${Math.round(n / 1_000)}k`;
+  return String(n);
+}
+
+// Four evenly-spaced ticks: 0, ⅓ total, ⅔ total, full total
+const LEFT_TICKS = [0, totalTokens / 3, (totalTokens * 2) / 3, totalTokens];
+
+// ── Right Y-axis weeks-of-Max ticks (0.0 / 0.5 / 1.0 / 1.2) ─────────────
+const RIGHT_TICKS = [0.0, 0.5, 1.0, 1.2];
+
+// ── SVG geometry ─────────────────────────────────────────────────────────
+// Viewport: 600×200. Padded to leave room for labels on left and right.
+// Label overlays are HTML spans positioned via %, not SVG <text>.
+const VB_W    = 600;
+const VB_H    = 200;
+const PAD_TOP    = 16;
+const PAD_BOTTOM = 28;   // x-axis labels
+const PAD_LEFT   = 8;    // inner chart area starts here (labels are HTML overlay)
+const PAD_RIGHT  = 8;
+
+const PLOT_W = VB_W - PAD_LEFT - PAD_RIGHT;
+const PLOT_H = VB_H - PAD_TOP  - PAD_BOTTOM;
+
+// Y maps fraction → SVG y coord (0 at top, so invert)
+// The chart's Y range is 0.0 → 1.2 (ceiling is 120% to give projection room)
+const Y_RANGE  = 1.2;  // max fraction on y-axis
+function yFrac(frac: number): number {
+  // fraction 0 → bottom (PAD_TOP + PLOT_H), fraction Y_RANGE → top (PAD_TOP)
+  return PAD_TOP + PLOT_H * (1 - frac / Y_RANGE);
+}
+
+// X: 0=start → PLOT_W=scope ceiling
+function xFrac(frac: number): number {
+  return PAD_LEFT + frac * PLOT_W;
+}
+
+// ── Chart path data ───────────────────────────────────────────────────────
+// Filled area: polygon from (0,0) through (current,current) back down to (0,0)
+const areaPath = [
+  `M ${xFrac(0)} ${yFrac(0)}`,
+  `L ${xFrac(currentFrac)} ${yFrac(currentFrac)}`,
+  `L ${xFrac(currentFrac)} ${yFrac(0)}`,
+  `Z`,
+].join(' ');
+
+// Dashed projection line: from (current, current) toward (1.0, 1.0) ceiling
+// We extend slightly past 1.0 visually to show overshoot potential,
+// but cap at projLower midpoint direction as destination
+const projLineEndX = Math.min((projLower + projUpper) / 2, 1.05);
+const projLineEndY = Math.min((projLower + projUpper) / 2, 1.05);
+const projLinePath = [
+  `M ${xFrac(currentFrac)} ${yFrac(currentFrac)}`,
+  `L ${xFrac(projLineEndX)} ${yFrac(projLineEndY)}`,
+].join(' ');
+
+// Projection band: polygon from current point, widening toward the ceiling
+// Lower edge: (current → projLower)
+// Upper edge: (current → projUpper)
+// Shape: starts at a single point (current) and widens — uncertainty cone
+const bandPath = [
+  `M ${xFrac(currentFrac)} ${yFrac(currentFrac)}`,
+  `L ${xFrac(projLineEndX)} ${yFrac(projLower)}`,
+  `L ${xFrac(projLineEndX)} ${yFrac(projUpper)}`,
+  `Z`,
+].join(' ');
+
+// Ceiling line: horizontal at 1.0 (100% = 180M tokens = 1.0 week)
+const ceilY = yFrac(1.0);
+
+// Now marker: vertical dotted line at current X
+const nowX = xFrac(currentFrac);
+
+// ── Pre-compute HTML overlay tick positions ───────────────────────────────
+// Left Y ticks: token labels, positioned as % of SVG height
+const leftYTicks = LEFT_TICKS.map((tok) => {
+  const frac = tok / totalTokens;  // fraction of full ceiling
+  const svgY  = yFrac(frac);
+  return {
+    topPct: (svgY / VB_H) * 100,
+    label:  fmtTokenAxis(tok),
+  };
+});
+
+// Right Y ticks: weeks-of-Max labels, positioned as % of SVG height
+const rightYTicks = RIGHT_TICKS.map((weeks) => {
+  const frac = weeks;  // weeks / 1.0 = fraction already (ceiling = 1.0 week)
+  const svgY  = yFrac(frac);
+  return {
+    topPct: (svgY / VB_H) * 100,
+    label:  weeks.toFixed(1) + 'w',
+    isMax:  weeks === 1.0,
+  };
+});
+
+// X-axis: two conceptual labels (start / scope ceiling)
+const xStart    = { leftPct: (xFrac(0)    / VB_W) * 100, label: 'start' };
+const xCeiling  = { leftPct: (xFrac(1.0)  / VB_W) * 100, label: 'scope ceiling' };
+
+// Now marker percentage for HTML overlay annotation
+const nowLeftPct = (nowX / VB_W) * 100;
+
+// Formatted current values for labels / tooltips
+const usedPct    = pctRaw.toFixed(1);
+const usedFmt    = fmtTokenAxis(usedTokens);
+const weeksUsed  = (usedK / totalK).toFixed(2);
+
+// ── X-axis date stamps ───────────────────────────────────────────────────
+// weekly_reset_at from totals; generated_at from root
+const weeklyResetAt: string = (totals.weekly_reset_at as string) ?? '';
+
+function toDateOnly(iso: string): string {
+  return iso.slice(0, 10); // YYYY-MM-DD
+}
+
+// start = weekly_reset_at − 7 days (window-anchored)
+function subtractDays(iso: string, days: number): string {
+  const d = new Date(iso);
+  d.setUTCDate(d.getUTCDate() - days);
+  return d.toISOString().slice(0, 10);
+}
+
+// Add integer days to a YYYY-MM-DD string
+function addDaysToDate(dateStr: string, days: number): string {
+  const d = new Date(dateStr + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function formatMonthDay(dateStr: string): string {
+  const d = new Date(dateStr + 'T00:00:00Z');
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return `${months[d.getUTCMonth()]} ${d.getUTCDate()}`;
+}
+
+const dateStart = weeklyResetAt ? subtractDays(weeklyResetAt, 7) : '';
+const dateNow   = generatedAt ? toDateOnly(generatedAt) : '';
+
+// days elapsed in window: from window start to now
+const daysElapsedInWindow = dateStart && dateNow
+  ? Math.max(0, (new Date(dateNow + 'T00:00:00Z').getTime() - new Date(dateStart + 'T00:00:00Z').getTime()) / 86_400_000)
+  : 0;
+
+// days to ceiling via linear rate: ((1 - currentFrac) / currentFrac) * daysElapsed
+const daysToCeiling = currentFrac > 0
+  ? Math.round(((1 - currentFrac) / currentFrac) * daysElapsedInWindow)
+  : 0;
+
+const projectedDateStr = dateNow ? addDaysToDate(dateNow, daysToCeiling) : '';
+const projectedPastReset = weeklyResetAt && projectedDateStr
+  ? projectedDateStr > toDateOnly(weeklyResetAt)
+  : false;
+
+const xCeilingDateLabel = projectedDateStr
+  ? projectedPastReset
+    ? `~${formatMonthDay(projectedDateStr)} (rolls past reset)`
+    : projectedDateStr
+  : '';
+
+// Caption fields
+const weeksInElapsed = (daysElapsedInWindow / 7).toFixed(1);
+const captionPct     = pctRaw.toFixed(1);
+---
+
+<!-- BurndownChart S060 — snapshot-plus-projection burnup -->
+<section class="burndown" aria-label={`Burnup chart: ${usedFmt} consumed (${usedPct}% of Max weekly budget)`}>
+  <header class="head">
+    <h2 class="title">
+      <span class="glyph" aria-hidden="true">◆</span> QUOTA BURNUP / SNAPSHOT + PROJECTION
+    </h2>
+    <div class="head-meta">
+      <span class="now-pct">{usedPct}%</span>
+      <span class="sep">·</span>
+      <span class="now-tok">{usedFmt} used</span>
+      <span class="sep">·</span>
+      <span class="now-weeks">{weeksUsed}w of Max</span>
+    </div>
+  </header>
+
+  <p class="chart-caption">~{weeksInElapsed} weeks into a 1-week Max budget · {captionPct}% consumed · projected to cross ceiling in ~{daysToCeiling} days</p>
+
+  <div class="chart-outer">
+
+    <!-- Main chart area with SVG + HTML overlay labels -->
+    <div class="chart-wrap">
+      <svg
+        class="chart-svg"
+        viewBox={`0 0 ${VB_W} ${VB_H}`}
+        role="img"
+        aria-label={`Burnup chart showing ${usedFmt} consumed (${usedPct}% of ${fmtTokenAxis(totalTokens)} weekly Max quota). Projection band indicates ${fmtTokenAxis(usedTokens + remainingFrac * 1.45 * totalTokens)}–${fmtTokenAxis(usedTokens + remainingFrac * 1.86 * totalTokens)} tokens at completion.`}
+      >
+        <!-- Gridlines at each left-axis tick -->
+        {leftYTicks.map((t) => {
+          const frac = LEFT_TICKS[leftYTicks.indexOf(t)]! / totalTokens;
+          const gy = yFrac(frac);
+          return (
+            <line
+              class="grid-line"
+              x1={PAD_LEFT} x2={VB_W - PAD_RIGHT}
+              y1={gy}       y2={gy}
+            />
+          );
+        })}
+
+        <!-- Ceiling line: dashed horizontal at 1.0 (100% / 180M / 1.0 week) -->
+        <line
+          class="ceiling-line"
+          x1={PAD_LEFT} x2={VB_W - PAD_RIGHT}
+          y1={ceilY}    y2={ceilY}
+          stroke-dasharray="6 4"
+        >
+          <title>Max weekly ceiling: {fmtTokenAxis(totalTokens)} tokens = 1.0 week of Max</title>
+        </line>
+
+        <!-- Projection band (uncertainty cone, widening from current point) -->
+        <path
+          class="proj-band"
+          d={bandPath}
+        >
+          <title>Projection band: {fmtTokenAxis(Math.round(usedTokens + remainingFrac * 1.45 * totalTokens))}–{fmtTokenAxis(Math.round(usedTokens + remainingFrac * 1.86 * totalTokens))} tokens at scope ceiling (1.45×–1.86× bias correction on remaining backlog)</title>
+        </path>
+
+        <!-- Filled area: consumed budget so far (0 → current) -->
+        <path
+          class="spend-area"
+          d={areaPath}
+        >
+          <title>Consumed so far: {usedFmt} tokens ({usedPct}% of Max weekly budget = {weeksUsed} weeks of Max)</title>
+        </path>
+
+        <!-- Dashed projection line: midpoint of band -->
+        <path
+          class="proj-line"
+          d={projLinePath}
+          stroke-dasharray="4 4"
+        >
+          <title>Projected trajectory (midpoint of 1.45×–1.86× band)</title>
+        </path>
+
+        <!-- "Now" vertical marker line -->
+        <line
+          class="now-line"
+          x1={nowX} x2={nowX}
+          y1={PAD_TOP}
+          y2={PAD_TOP + PLOT_H}
+          stroke-dasharray="2 3"
+        />
+
+        <!-- "Now" dot at the current position -->
+        <circle
+          class="now-dot"
+          cx={nowX}
+          cy={yFrac(currentFrac)}
+          r="5"
+        >
+          <title>Current position: {usedFmt} ({usedPct}% · {weeksUsed}w of Max)</title>
+        </circle>
+      </svg>
+
+      <!-- HTML axis-label overlays — outside SVG to avoid stretch distortion (S069) -->
+
+      <!-- Left Y-axis: token ticks -->
+      {leftYTicks.map((t) => (
+        <span class="ytick ytick-left" style={`top: ${t.topPct.toFixed(2)}%`}>
+          {t.label}
+        </span>
+      ))}
+
+      <!-- Right Y-axis: weeks-of-Max ticks -->
+      {rightYTicks.map((t) => (
+        <span
+          class={`ytick ytick-right weeks-of-max${t.isMax ? ' ytick-ceiling' : ''}`}
+          style={`top: ${t.topPct.toFixed(2)}%`}
+        >
+          {t.label}
+        </span>
+      ))}
+
+      <!-- X-axis labels: start + scope ceiling -->
+      <span class="xtick xtick-start"  style={`left: ${xStart.leftPct.toFixed(2)}%`}>   {xStart.label}</span>
+      <span class="xtick xtick-end"    style={`left: ${xCeiling.leftPct.toFixed(2)}%`}>  {xCeiling.label}</span>
+
+      <!-- X-axis date stamps (start / now / projected) -->
+      <span class="xtick xtick-date xtick-date-start" style={`left: ${xStart.leftPct.toFixed(2)}%`} set:html={dateStart + '\n'} />
+      <span class="xtick xtick-date xtick-date-now" style={`left: ${nowLeftPct.toFixed(2)}%`} set:html={dateNow + '\n'} />
+      <span class="xtick xtick-date xtick-date-proj" style={`left: ${xCeiling.leftPct.toFixed(2)}%`} set:html={xCeilingDateLabel + '\n'} />
+
+      <!-- "Now" annotation above the marker -->
+      <span class="now-label" style={`left: ${nowLeftPct.toFixed(2)}%`}>now</span>
+
+    </div><!-- .chart-wrap -->
+
+  </div><!-- .chart-outer -->
+
+  <!-- Legend row -->
+  <div class="legend" aria-hidden="true">
+    <span class="legend-item">
+      <span class="legend-swatch legend-spend"></span>
+      consumed
+    </span>
+    <span class="legend-item">
+      <span class="legend-swatch legend-proj-line"></span>
+      projection (midpoint)
+    </span>
+    <span class="legend-item">
+      <span class="legend-swatch legend-band"></span>
+      1.45×–1.86× band
+    </span>
+    <span class="legend-item">
+      <span class="legend-swatch legend-ceil"></span>
+      Max weekly ceiling
+    </span>
+  </div>
+</section>
+
+<style>
+  /* ── Outer container ───────────────────────────────────────── */
+  .burndown {
+    position: relative;
+    border: 1px solid var(--border);
+    background: var(--bg-panel);
+    padding: var(--space-5);
+  }
+
+  /* ── Header ────────────────────────────────────────────────── */
+  .head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-4);
+    margin-bottom: var(--space-4);
+    flex-wrap: wrap;
+  }
+
+  .title {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: var(--size-sm);
+    color: var(--fg-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    white-space: nowrap;
+  }
+  .title .glyph {
+    color: var(--accent);
+    font-size: 0.65em;
+  }
+
+  .head-meta {
+    font-size: var(--size-sm);
+    color: var(--fg-dim);
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+  }
+  .now-pct  { color: var(--accent); font-weight: 600; }
+  .now-tok  { color: var(--fg); }
+  .now-weeks { color: var(--fg-dim); }
+  .sep { color: var(--muted); margin: 0 var(--space-2); }
+
+  /* ── Caption ───────────────────────────────────────────────── */
+  .chart-caption {
+    font-family: var(--font-mono);
+    font-size: var(--size-sm);
+    color: var(--fg-dim);
+    margin: 0 0 var(--space-3);
+    letter-spacing: 0.02em;
+  }
+
+  /* ── Outer flex: chart ─────────────────────────────────────── */
+  .chart-outer {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+  }
+
+  /* ── Chart wrap: positions HTML overlay labels ─────────────── */
+  .chart-wrap {
+    position: relative;
+    flex: 1 1 0;
+    min-width: 0;
+    height: 200px;   /* matches VB_H pixel height */
+  }
+
+  .chart-svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
+  /* ── SVG elements ──────────────────────────────────────────── */
+  .grid-line {
+    stroke: var(--border);
+    stroke-width: 0.5;
+    stroke-dasharray: 1 3;
+  }
+
+  .ceiling-line {
+    stroke: var(--accent-dim);
+    stroke-width: 1;
+    fill: none;
+  }
+
+  .spend-area {
+    fill: var(--accent);
+    opacity: 0.25;
+  }
+
+  .proj-band {
+    fill: var(--accent-dim);
+    opacity: 0.12;
+  }
+
+  .proj-line {
+    stroke: var(--accent-dim);
+    stroke-width: 1.5;
+    fill: none;
+  }
+
+  .now-line {
+    stroke: var(--fg-dim);
+    stroke-width: 1;
+    fill: none;
+  }
+
+  .now-dot {
+    fill: var(--accent);
+    stroke: var(--bg-panel);
+    stroke-width: 2;
+  }
+
+  /* Hover brightens spend area */
+  .spend-area,
+  .proj-band {
+    @media (prefers-reduced-motion: no-preference) {
+      transition: opacity var(--motion-fast) var(--easing);
+    }
+  }
+  .spend-area:hover { opacity: 0.38; }
+  .proj-band:hover  { opacity: 0.22; }
+
+  /* ── HTML axis-label overlays ──────────────────────────────── */
+  .ytick,
+  .xtick,
+  .now-label {
+    position: absolute;
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--muted);
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+    pointer-events: none;
+    line-height: 1;
+  }
+
+  .ytick-left {
+    right: calc(100% + 2px);   /* outside left edge of chart-wrap */
+    width: 36px;
+    text-align: right;
+    transform: translateY(-50%);
+  }
+
+  .ytick-right {
+    left: calc(100% + 2px);    /* outside right edge of chart-wrap */
+    transform: translateY(-50%);
+  }
+  .ytick-ceiling {
+    color: var(--accent-dim);
+  }
+
+  .xtick {
+    bottom: 4px;
+    font-size: 9px;
+  }
+  .xtick-start {
+    left: 0;
+  }
+  .xtick-end {
+    /* "scope ceiling" label — right-align from its x position */
+    transform: translateX(-100%);
+  }
+
+  /* Date stamps sit one line below the word labels */
+  .xtick-date {
+    bottom: -10px;
+  }
+  .xtick-date-start {
+    left: 0;
+  }
+  .xtick-date-now {
+    transform: translateX(-50%);
+  }
+  .xtick-date-proj {
+    transform: translateX(-100%);
+  }
+
+  .now-label {
+    top: 2px;
+    font-size: 9px;
+    color: var(--accent);
+    transform: translateX(-50%);
+    letter-spacing: 0.10em;
+    text-transform: uppercase;
+  }
+
+  /* ── Legend ────────────────────────────────────────────────── */
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3) var(--space-5);
+    margin-top: var(--space-4);
+    font-size: 10px;
+    color: var(--fg-dim);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .legend-swatch {
+    display: inline-block;
+    width: 14px;
+    height: 8px;
+    border: 1px solid var(--border-strong);
+    flex-shrink: 0;
+  }
+
+  .legend-spend {
+    background: var(--accent);
+    opacity: 0.35;
+  }
+
+  .legend-proj-line {
+    background: transparent;
+    border-color: var(--accent-dim);
+    position: relative;
+    overflow: hidden;
+  }
+  .legend-proj-line::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(
+      90deg,
+      var(--accent-dim) 0px,
+      var(--accent-dim) 4px,
+      transparent 4px,
+      transparent 8px
+    );
+  }
+
+  .legend-band {
+    background: var(--accent-dim);
+    opacity: 0.2;
+  }
+
+  .legend-ceil {
+    background: transparent;
+    border-color: var(--accent-dim);
+    position: relative;
+    overflow: hidden;
+  }
+  .legend-ceil::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(
+      90deg,
+      var(--accent-dim) 0px,
+      var(--accent-dim) 6px,
+      transparent 6px,
+      transparent 10px
+    );
+  }
+
+  /* ── Responsive ────────────────────────────────────────────── */
+  @media (max-width: 640px) {
+    .title {
+      font-size: 10px;
+    }
+    .chart-wrap {
+      height: 160px;
+    }
+    .head {
+      gap: var(--space-2);
+    }
+    .head-meta {
+      font-size: 10px;
+    }
+    .legend {
+      gap: var(--space-2) var(--space-3);
+    }
+  }
+</style>

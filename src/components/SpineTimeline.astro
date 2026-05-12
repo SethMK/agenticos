@@ -1,0 +1,195 @@
+---
+/**
+ * SpineTimeline.astro — horizontal 6-epic strip (A-style from hybrid spec).
+ *
+ * Renders a row of epoch pins, one per epic. Each cell shows:
+ *   - epic ID (coloured by status)
+ *   - square pin (accent = active, green = done, dim = planned)
+ *   - epic title (truncated)
+ *   - mini 3px progress bar
+ *   - done/total count
+ *
+ * Active: status === "active" OR (0 < done_count < story_count).
+ * Done:   done_count === story_count && story_count > 0.
+ *
+ * Static at build. No client JS.
+ */
+
+export interface EpicEntry {
+  id: string;
+  title: string;
+  status: string;
+  story_count: number;
+  done_count: number;
+}
+
+interface Props {
+  epics: EpicEntry[];
+}
+
+const { epics } = Astro.props;
+
+function epochClass(e: EpicEntry): string {
+  if (e.done_count === e.story_count && e.story_count > 0) return 'done';
+  if (e.status === 'active' || (e.done_count > 0 && e.done_count < e.story_count)) return 'active';
+  return 'planned';
+}
+
+function epochPct(e: EpicEntry): number {
+  if (!e.story_count) return 0;
+  const pct = Math.round((e.done_count / e.story_count) * 100);
+  // Never show a completely empty bar for planned epics; show a 1px sliver at minimum
+  return Math.max(pct, e.done_count > 0 ? 1 : 0);
+}
+---
+
+<section class="spine" aria-label="Epic timeline">
+  <span class="bl" aria-hidden="true"></span>
+  <span class="br" aria-hidden="true"></span>
+  <div class="spine-label">BUILD SPINE · SIX EPICS, ORDERED BY BIRTH</div>
+  <div class="spine-grid">
+    {epics.map((e) => {
+      const cls = epochClass(e);
+      const pct = epochPct(e);
+      const statusLabel = cls === 'done' ? 'done' : cls === 'active' ? 'active' : 'planned';
+      return (
+        <div class={`epoch ${cls}`} aria-label={`${e.id}: ${e.title}, ${e.done_count} of ${e.story_count} done, ${statusLabel}`}>
+          <div class="id">{e.id}</div>
+          <span class="pin" aria-hidden="true"></span>
+          <div class="name">{e.title}</div>
+          <div class="mini-meter" aria-hidden="true">
+            <div class="fill" style={`width:${pct}%`}></div>
+          </div>
+          <div class="count">{e.done_count} / {e.story_count} · {statusLabel}</div>
+        </div>
+      );
+    })}
+  </div>
+</section>
+
+<style>
+  .spine {
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    background: var(--bg-panel);
+    padding: 18px 22px 20px;
+    position: relative;
+    font-variant-numeric: tabular-nums lining-nums;
+  }
+  .spine::before,
+  .spine::after {
+    content: "";
+    position: absolute;
+    width: 8px;
+    height: 8px;
+    border: 1px solid var(--accent);
+    pointer-events: none;
+  }
+  .spine::before { top: -1px; left: -1px; border-right: 0; border-bottom: 0; }
+  .spine::after  { top: -1px; right: -1px; border-left: 0; border-bottom: 0; }
+  .bl {
+    position: absolute;
+    width: 8px; height: 8px;
+    bottom: -1px; left: -1px;
+    border: 1px solid var(--accent);
+    border-right: 0; border-top: 0;
+    pointer-events: none;
+  }
+  .br {
+    position: absolute;
+    width: 8px; height: 8px;
+    bottom: -1px; right: -1px;
+    border: 1px solid var(--accent);
+    border-left: 0; border-top: 0;
+    pointer-events: none;
+  }
+
+  .spine-label {
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 14px;
+  }
+
+  .spine-grid {
+    display: grid;
+    grid-template-columns: repeat(8, minmax(0, 1fr));
+    gap: 14px;
+    position: relative;
+  }
+  .spine-grid::before {
+    content: "";
+    position: absolute;
+    top: 24px;
+    left: 0;
+    right: 0;
+    border-top: 1px dotted var(--border-strong);
+    z-index: 0;
+  }
+
+  .epoch {
+    position: relative;
+    z-index: 1;
+  }
+
+  .epoch .id {
+    font-size: 11px;
+    color: var(--accent);
+    font-weight: 600;
+    letter-spacing: 0.06em;
+  }
+  .epoch.planned .id   { color: var(--muted); }
+
+  .epoch .pin {
+    width: 8px;
+    height: 8px;
+    background: var(--bg-panel);
+    border: 1px solid var(--border-strong);
+    display: block;
+    margin: 14px 0 10px;
+  }
+  .epoch.active .pin { background: var(--accent); border-color: var(--accent); }
+  .epoch.done   .pin { background: var(--success); border-color: var(--success); }
+
+  .epoch .name {
+    font-size: 12px;
+    color: var(--fg);
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .epoch.planned .name { color: var(--fg-dim); }
+
+  .epoch .mini-meter {
+    height: 3px;
+    background: var(--bg-elevated);
+    margin-top: 7px;
+    position: relative;
+    overflow: hidden;
+  }
+  .epoch .mini-meter .fill { height: 100%; background: var(--accent); }
+  .epoch.planned .mini-meter .fill { background: var(--accent-dim); }
+  .epoch.done    .mini-meter .fill { background: var(--success); }
+
+  .epoch .count {
+    font-size: 10px;
+    color: var(--fg-dim);
+    margin-top: 6px;
+    letter-spacing: 0.04em;
+  }
+  .epoch.planned .count { color: var(--muted); }
+
+  /* Responsive: 3-column at tablet, 2-column at mobile */
+  @media (max-width: 1024px) {
+    .spine-grid {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 18px 14px;
+    }
+    .spine-grid::before { display: none; }
+  }
+  @media (max-width: 640px) {
+    .spine-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+</style>

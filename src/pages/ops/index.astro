@@ -1,0 +1,292 @@
+---
+/**
+ * /ops — S012 — private ops view (server-rendered).
+ *
+ * Auth guard: Cloudflare Access header required.
+ * Shows: weekly Claude limit window (used / budget), project list with
+ * real names, and snapshot freshness timestamp.
+ *
+ * Data source: data/snapshots/ops.json read from disk at request time.
+ * Budget source: PLAN_QUOTAS["max"] from data/pipeline/snapshot.ts.
+ */
+import { readFileSync } from 'fs';
+import { join } from 'path';
+import TerminalLayout from '../../layouts/TerminalLayout.astro';
+import { requireAuth } from '../../../api/lib/auth.ts';
+import { PLAN_QUOTAS } from '../../../data/pipeline/quotas.ts';
+
+// Auth guard — return 403 Response if not allowed.
+const denied = requireAuth(Astro.request);
+if (denied) return denied;
+
+// Resolve ops snapshot relative to project root (Astro runs from repo root).
+const REPO_ROOT = join(process.cwd());
+const OPS_SNAPSHOT = join(REPO_ROOT, 'data/snapshots/ops.json');
+
+interface DailyRow {
+  date: string;
+  tokens: number;
+  usd: number;
+  messages: number;
+  in_tokens: number;
+  out_tokens: number;
+}
+
+interface ProjectRow {
+  name: string;
+  tokens: number;
+  usd: number;
+  rows: number;
+}
+
+interface OpsSnapshot {
+  generated_at: string;
+  daily: DailyRow[];
+  projects: ProjectRow[];
+  totals: Record<string, number>;
+}
+
+let ops: OpsSnapshot;
+try {
+  ops = JSON.parse(readFileSync(OPS_SNAPSHOT, 'utf-8')) as OpsSnapshot;
+} catch {
+  return new Response('<h1>Snapshot unavailable</h1>', {
+    status: 503,
+    headers: { 'Content-Type': 'text/html' },
+  });
+}
+
+// ── Weekly window (Spec-Gate S012) ──────────────────────────────────────────
+// Anchor: most recent Monday 00:00 UTC at or before generated_at.
+const generatedAt = new Date(ops.generated_at);
+const dayOfWeek = generatedAt.getUTCDay(); // 0=Sun, 1=Mon, …
+const daysSinceMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+const weekAnchor = new Date(generatedAt);
+weekAnchor.setUTCDate(weekAnchor.getUTCDate() - daysSinceMonday);
+weekAnchor.setUTCHours(0, 0, 0, 0);
+
+const anchorDateStr = weekAnchor.toISOString().slice(0, 10); // YYYY-MM-DD
+const generatedDateStr = ops.generated_at.slice(0, 10);
+
+const weeklyUsed = (ops.daily ?? [])
+  .filter((r) => r.date >= anchorDateStr && r.date <= generatedDateStr)
+  .reduce((sum, r) => sum + r.tokens, 0);
+
+const quota = PLAN_QUOTAS['max'];
+const weeklyBudget = quota.weekly_k * 1000;
+
+// Used and budget as integers for the grep-verifiable `used / budget` pattern.
+const usedK = Math.round(weeklyUsed / 1000);
+const budgetK = quota.weekly_k;
+const pct = budgetK > 0 ? Math.round((usedK / budgetK) * 100) : 0;
+
+// ── Projects (top 10 by tokens) ─────────────────────────────────────────────
+const topProjects = [...(ops.projects ?? [])]
+  .sort((a, b) => b.tokens - a.tokens)
+  .slice(0, 10);
+
+// ── Human-readable timestamp ─────────────────────────────────────────────────
+const generatedAtHuman = generatedAt.toLocaleString('en-GB', {
+  timeZone: 'UTC',
+  year: 'numeric',
+  month: 'short',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+});
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+function fmt(n: number): string {
+  return n.toLocaleString('en-US');
+}
+function fmtUsd(n: number): string {
+  return '$' + n.toFixed(2);
+}
+---
+<TerminalLayout title="AGENTICOS — /ops">
+  <main id="main-content" aria-label="Ops dashboard">
+
+    <section class="ops-section" aria-label="Page header">
+      <h2 class="section-heading">ops <span class="muted">/ private</span></h2>
+      <p class="freshness">
+        <span class="label">Snapshot:</span>
+        <time datetime={ops.generated_at}>{generatedAtHuman} UTC</time>
+      </p>
+    </section>
+
+    <section class="ops-section" aria-label="Weekly Claude limit window">
+      <h3 class="section-heading">Weekly limit window</h3>
+      <div class="window-card">
+        <div class="window-main">
+          <span class="label">Used / Budget (k tokens):</span>
+          <span class="window-value accent">{usedK} / {budgetK}</span>
+        </div>
+        <div class="window-meta">
+          <span class="label">Week anchor (Mon 00:00 UTC):</span>
+          <span>{anchorDateStr}</span>
+        </div>
+        <div class="window-bar" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label={`${pct}% of weekly budget used`}>
+          <div class="window-bar-fill" style={`width: ${Math.min(pct, 100)}%`}></div>
+        </div>
+        <p class="window-pct muted">{pct}% of Max plan ({budgetK.toLocaleString('en-US')} k budget)</p>
+      </div>
+    </section>
+
+    <section class="ops-section" aria-label="Projects by token usage">
+      <h3 class="section-heading">Projects <span class="muted">(top 10 by tokens)</span></h3>
+      <table class="projects-table">
+        <thead>
+          <tr>
+            <th scope="col">Project</th>
+            <th scope="col" class="num-col">Tokens</th>
+            <th scope="col" class="num-col">Cost</th>
+          </tr>
+        </thead>
+        <tbody>
+          {topProjects.map((p) => (
+            <tr>
+              <td class="name-cell">{p.name}</td>
+              <td class="num-col">{fmt(p.tokens)}</td>
+              <td class="num-col">{fmtUsd(p.usd)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+
+  </main>
+
+  <style>
+    .ops-section {
+      margin-bottom: var(--space-6);
+    }
+
+    .section-heading {
+      font-family: var(--font-display);
+      font-size: var(--size-lg);
+      color: var(--accent);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      margin: 0 0 var(--space-3) 0;
+      border-bottom: 1px dotted var(--border-strong);
+      padding-bottom: var(--space-2);
+    }
+
+    .section-heading .muted {
+      color: var(--muted);
+      font-weight: 400;
+    }
+
+    .freshness {
+      font-size: var(--size-sm);
+      color: var(--fg-dim);
+      margin: 0;
+    }
+
+    .label {
+      color: var(--muted);
+      margin-right: var(--space-2);
+    }
+
+    .accent {
+      color: var(--accent);
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+
+    /* Window card */
+    .window-card {
+      background: var(--bg-panel);
+      border: 1px solid var(--border-strong);
+      padding: var(--space-4) var(--space-5);
+      display: grid;
+      gap: var(--space-3);
+    }
+
+    .window-main {
+      font-size: var(--size-lg);
+    }
+
+    .window-value {
+      font-family: var(--font-display);
+      font-size: 1.5rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+    }
+
+    .window-meta {
+      font-size: var(--size-sm);
+      color: var(--fg-dim);
+    }
+
+    .window-bar {
+      height: 6px;
+      background: var(--border-strong);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .window-bar-fill {
+      position: absolute;
+      top: 0;
+      left: 0;
+      height: 100%;
+      background: var(--accent);
+      transition: width var(--motion-base) var(--easing);
+    }
+
+    .window-pct {
+      font-size: var(--size-sm);
+      margin: 0;
+    }
+
+    /* Projects table */
+    .projects-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: var(--size-sm);
+    }
+
+    .projects-table thead tr {
+      border-bottom: 1px solid var(--border-strong);
+    }
+
+    .projects-table th {
+      font-weight: 700;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      padding: var(--space-2) var(--space-3);
+      text-align: left;
+    }
+
+    .projects-table td {
+      padding: var(--space-2) var(--space-3);
+      border-bottom: 1px dotted var(--border);
+      color: var(--fg);
+    }
+
+    .projects-table tr:last-child td {
+      border-bottom: none;
+    }
+
+    .projects-table tr:hover td {
+      background: var(--bg-elevated);
+    }
+
+    .name-cell {
+      font-family: var(--font-mono);
+      color: var(--fg-dim);
+      word-break: break-all;
+    }
+
+    .num-col {
+      text-align: right;
+      font-variant-numeric: tabular-nums lining-nums;
+      white-space: nowrap;
+    }
+  </style>
+</TerminalLayout>

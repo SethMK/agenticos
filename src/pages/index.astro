@@ -1,0 +1,102 @@
+---
+export const prerender = true;
+/**
+ * Public CV view — S008.
+ *
+ * Renders the 6 headline stat cards on `/`:
+ *   TOKENS · SUBSCRIPTION · PROJECTS · SKILLS · AGENTS · MCP SERVERS
+ *
+ * Numbers are imported from `data/snapshots/public.json` at build time.
+ * No client-side fetch. If the file is missing, Astro fails the build
+ * with a clear ENOENT — which is exactly what we want on a fresh
+ * checkout that hasn't run `bun run pipeline` yet.
+ */
+import TerminalLayout from '../layouts/TerminalLayout.astro';
+import StatCard from '../components/StatCard.astro';
+import ModelSplitChart from '../components/ModelSplitChart.astro';
+import ProjectSplitChart from '../components/ProjectSplitChart.astro';
+import UsageChart from '../components/UsageChart.astro';
+import ActivityHeatmap from '../components/ActivityHeatmap.astro';
+import { formatTokens, formatInt, formatCurrency } from '../lib/format.ts';
+import snapshot from '../../data/snapshots/public.json';
+
+const tokens = snapshot.totals.total_tokens;
+const subscriptionTotal = snapshot.totals.total_subscription;
+const subscriptionCurrency = snapshot.totals.subscription_currency;
+const currentPlan = snapshot.totals.current_plan;
+const currentPlanSince = snapshot.totals.current_plan_since;
+const payingSince = snapshot.totals.paying_since ?? currentPlanSince;
+const { projects, skills, agents, mcp_servers, counts_trend_7d, top_skills, top_agents, top_mcp_servers } = snapshot.counts as any;
+// S025: extract per-entity sparkline arrays; null-safe (may be absent on old snapshots).
+const trend7d = (counts_trend_7d as any) ?? null;
+
+/**
+ * Compute a 7d-vs-prior-7d delta on a numeric daily series.
+ * Returns a signed percent string like "+18%" or "-4%", or undefined
+ * when there isn't enough data to be honest about it.
+ */
+function weekDelta(rows: { tokens: number; usd: number }[], key: 'tokens' | 'usd'): string | undefined {
+  if (!rows || rows.length < 14) return undefined;
+  const tail = rows.slice(-14);
+  const prior = tail.slice(0, 7).reduce((s, r) => s + (r[key] ?? 0), 0);
+  const recent = tail.slice(7).reduce((s, r) => s + (r[key] ?? 0), 0);
+  if (prior === 0) return undefined;
+  const pct = ((recent - prior) / prior) * 100;
+  const sign = pct >= 0 ? '+' : '';
+  return `${sign}${pct.toFixed(0)}%`;
+}
+
+const tokensDelta = weekDelta(snapshot.daily as { tokens: number; usd: number }[], 'tokens');
+---
+<TerminalLayout title="AGENTICOS — /">
+  <main id="main-content" class="stats" aria-label="Headline stats">
+    <StatCard label="TOKENS" value={formatTokens(tokens)} delta={tokensDelta} unit="tok" />
+    <StatCard label="SUBSCRIPTION" value={formatCurrency(subscriptionTotal, subscriptionCurrency)} context={`— ${currentPlan.charAt(0).toUpperCase() + currentPlan.slice(1)}, paying since ${payingSince}`} />
+    <StatCard label="PROJECTS" value={formatInt(projects)} trend={trend7d?.projects ?? undefined} />
+    <StatCard label="SKILLS" value={formatInt(skills)} trend={trend7d?.skills ?? undefined} topNames={top_skills} />
+    <StatCard label="AGENTS" value={formatInt(agents)} trend={trend7d?.agents ?? undefined} topNames={top_agents} />
+    <StatCard label="MCP SERVERS" value={formatInt(mcp_servers)} unit="MCP" trend={trend7d?.mcp_servers ?? undefined} topNames={top_mcp_servers} />
+  </main>
+
+  <section class="heatmap-wrap" aria-label="Activity heatmap">
+    <ActivityHeatmap />
+  </section>
+
+  <section class="split-row" aria-label="Project + model split">
+    <ProjectSplitChart />
+    <ModelSplitChart />
+  </section>
+
+  <section class="usage-wrap" aria-label="30-day usage">
+    <UsageChart />
+  </section>
+
+  <style>
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: var(--grid-gutter);
+    }
+    @media (max-width: 960px) {
+      .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 640px) {
+      .stats { grid-template-columns: 1fr; }
+    }
+    .split-row {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: var(--grid-gutter);
+      margin-top: var(--grid-gutter);
+    }
+    @media (max-width: 960px) {
+      .split-row { grid-template-columns: 1fr; }
+    }
+    .usage-wrap {
+      margin-top: var(--grid-gutter);
+    }
+    .heatmap-wrap {
+      margin-top: var(--grid-gutter);
+    }
+  </style>
+</TerminalLayout>

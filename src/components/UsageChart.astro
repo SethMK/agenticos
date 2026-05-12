@@ -1,0 +1,327 @@
+---
+/**
+ * UsageChart.astro — S009
+ *
+ * 30-day trailing daily-token bar chart for `/`.
+ *
+ * Visualisation choice: vertical bar chart, one bar per day.
+ *   - The ActivityHeatmap (S018) already tells the "where the streaks
+ *     are" story across 53 weeks. This chart serves a different read:
+ *     precise daily counts in the recent 30-day window, where exact
+ *     magnitudes matter. Bars > area because each bar = one observed
+ *     day; an area chart would imply continuous data we don't have.
+ *   - Hand-rolled SVG with viewBox, no chart libs. Same grammar as
+ *     ModelSplitChart / ProjectSplitChart (hairline border, dotted
+ *     legend rows, ◆ MONO-CAPS title, --accent for emphasis).
+ *
+ * Data: snapshot.daily.slice(-30). All dates emit YYYY-MM-DD as
+ *   <text> ticks (first/mid/last) AND as <title> tooltips per bar.
+ *   Heatmap already produces 371 distinct dates, but every bar's
+ *   tooltip carries its own date so this component pulls its weight.
+ *
+ * Axes:
+ *   X: day index, ticks at first / middle / last only (mono-friendly).
+ *   Y: tokens. Compact-formatted (formatTokens) at top + middle gridline.
+ *
+ * Accessibility:
+ *   role="img" + aria-label summarising the range + peak day.
+ *   Each bar gets a native <title> for hover tooltip (no JS).
+ *
+ * No client-side JS, no fetch.
+ */
+import snapshot from '../../data/snapshots/public.json';
+import { formatTokens } from '../lib/format.ts';
+
+interface DailyRow {
+  date: string;
+  tokens: number;
+  usd: number;
+  messages: number;
+  in_tokens: number;
+  out_tokens: number;
+}
+
+const allDaily: DailyRow[] = (snapshot as { daily?: DailyRow[] }).daily ?? [];
+// Trailing 30 data-days. If the snapshot has fewer than 30 rows we still
+// render what we have — the build won't fail.
+const days: DailyRow[] = allDaily.slice(-30);
+
+const maxTokens = days.reduce((m, d) => (d.in_tokens + d.out_tokens > m ? d.in_tokens + d.out_tokens : m), 0);
+const totalTokens = days.reduce((s, d) => s + d.in_tokens + d.out_tokens, 0);
+const totalUsd = days.reduce((s, d) => s + d.usd, 0);
+
+// Locate the peak day for the aria-label (by billable tokens).
+let peakDay: DailyRow | undefined;
+for (const d of days) {
+  if (!peakDay || d.in_tokens + d.out_tokens > peakDay.in_tokens + peakDay.out_tokens) peakDay = d;
+}
+
+const firstDate = days[0]?.date ?? '';
+const lastDate = days[days.length - 1]?.date ?? '';
+
+// Compute actual calendar-day span for the header label.
+// The "30D" in the original referred to 30 data-entries, not 30 calendar days.
+// We label with the real calendar span so the header matches reality.
+function calendarDaySpan(a: string, b: string): number {
+  if (!a || !b) return 0;
+  return Math.round((new Date(b).getTime() - new Date(a).getTime()) / 86_400_000);
+}
+const spanDays = calendarDaySpan(firstDate, lastDate);
+const windowLabel = spanDays > 0 ? `${spanDays}D` : '30D';
+
+// SVG geometry — viewBox-driven so the chart scales to container width.
+const PAD_LEFT = 42;   // y-axis tick labels (widened from 38 to avoid clipping long labels)
+const PAD_RIGHT = 8;
+const PAD_TOP = 16;    // increased from 12 — gives top label's half-height room above plot
+const PAD_BOTTOM = 22; // x-axis date labels
+const VB_W = 600;
+const VB_H = 160;
+const PLOT_W = VB_W - PAD_LEFT - PAD_RIGHT;
+const PLOT_H = VB_H - PAD_TOP - PAD_BOTTOM;
+
+// Bar geometry: equal slots, 70% width per bar.
+const slot = days.length > 0 ? PLOT_W / days.length : 0;
+const barW = Math.max(1, slot * 0.7);
+
+function barHeight(tokens: number): number {
+  if (maxTokens <= 0) return 0;
+  return (tokens / maxTokens) * PLOT_H;
+}
+
+// Y-axis tick values rendered top→bottom (max, half, 0) with dominant-baseline="middle"
+// so each label's visual centre aligns with its gridline.
+// Root cause of previous label inversion: y + 3 offset placed labels below their gridlines,
+// causing the top-tick label to sit below the second-tick gridline at small heights.
+// Fix: use dominant-baseline="middle" (centres text on the y coordinate) and keep yTicks
+// in descending value order so top=max reads correctly.
+const yTicks = [
+  { value: maxTokens, y: PAD_TOP },
+  { value: maxTokens / 2, y: PAD_TOP + PLOT_H / 2 },
+  { value: 0, y: PAD_TOP + PLOT_H },
+];
+
+// X-axis: evenly-spaced labels across the data window.
+// Target 5 ticks (4 gaps) always including the first and last bar.
+// For 30 bars: indices 0, 7, 14, 22, 29 — no two adjacent labels at the ends.
+function buildXLabelIdxs(n: number): number[] {
+  if (n <= 0) return [];
+  if (n <= 5) return Array.from({ length: n }, (_, i) => i);
+  const ticks = 5;
+  return Array.from({ length: ticks }, (_, k) =>
+    Math.round((k / (ticks - 1)) * (n - 1))
+  );
+}
+const xLabelIdxs = buildXLabelIdxs(days.length);
+
+// S069: pre-compute axis label positions as CSS percentages so labels can render
+// as HTML overlays inside .chart-wrap, escaping the SVG's preserveAspectRatio="none"
+// horizontal stretch (~1.83× at 1440px viewport) that distorted them as SVG <text>.
+// S068 spike F1 variant validated this approach at 1440/1024/640 viewports.
+const yTickLabels = yTicks.map((t) => ({
+  topPct: (t.y / VB_H) * 100,
+  label: formatTokens(t.value),
+}));
+const xTickLabels = xLabelIdxs.map((i) => {
+  const cx = PAD_LEFT + i * slot + slot / 2;
+  const anchor = i === 0 ? 'start' : i === days.length - 1 ? 'end' : 'middle';
+  return {
+    leftPct: (cx / VB_W) * 100,
+    anchor,
+    date: days[i]?.date ?? '',
+  };
+});
+
+// Pre-compute bar slots so we can reference them both for rects and titles.
+const bars = days.map((d, i) => {
+  const h = barHeight(d.in_tokens + d.out_tokens);
+  const x = PAD_LEFT + i * slot + (slot - barW) / 2;
+  const y = PAD_TOP + PLOT_H - h;
+  return { ...d, x, y, w: barW, h, idx: i };
+});
+---
+<section class="usage" aria-label={`${windowLabel} token usage, ${firstDate} to ${lastDate}`}>
+  <header class="head">
+    <h2 class="title"><span class="glyph" aria-hidden="true">◆</span> USAGE / {windowLabel}</h2>
+    <div class="totals">
+      <span class="totals-tokens">{formatTokens(totalTokens)}</span>
+      <span class="totals-sep">·</span>
+      <span class="totals-range">{firstDate} → {lastDate}</span>
+    </div>
+  </header>
+
+  <div class="chart-wrap">
+    <svg
+      class="chart"
+      viewBox={`0 0 ${VB_W} ${VB_H}`}
+      preserveAspectRatio="none"
+      role="img"
+      aria-label={
+        peakDay
+          ? `${windowLabel} token usage chart, ${firstDate} to ${lastDate}, peak ${formatTokens(peakDay.in_tokens + peakDay.out_tokens)} tokens on ${peakDay.date}.`
+          : `${windowLabel} token usage chart, ${firstDate} to ${lastDate}.`
+      }
+    >
+      {/* Y-axis gridlines only — tick labels moved to HTML overlay below (S069).
+          Keeping the gridlines as SVG because they SHOULD stretch with bars. */}
+      {
+        yTicks.map((t) => (
+          <line
+            class="grid"
+            x1={PAD_LEFT}
+            x2={VB_W - PAD_RIGHT}
+            y1={t.y}
+            y2={t.y}
+          />
+        ))
+      }
+      {/* Bars: one per day. Each one carries its date + token breakdown in <title>
+          (native tooltip + a11y label, zero JS). in/out show where the day's tokens
+          went; the large remainder is cache (creation + read), visible via subtraction. */}
+      {
+        bars.map((b) => (
+          <rect
+            class="bar"
+            x={b.x}
+            y={b.y}
+            width={b.w}
+            height={b.h}
+          >
+            <title>{`${b.date}\ntotal: ${formatTokens(b.tokens)}\nin: ${formatTokens(b.in_tokens ?? 0)}\nout: ${formatTokens(b.out_tokens ?? 0)}`}</title>
+          </rect>
+        ))
+      }
+    </svg>
+    {/* HTML axis-label overlays — render outside the stretched SVG so glyphs
+        keep their true width at all viewports (S069 fix; S068 F1 variant). */}
+    {
+      yTickLabels.map((t) => (
+        <span class="ytick-label" style={`top: ${t.topPct}%`}>{t.label}</span>
+      ))
+    }
+    {
+      xTickLabels.map((t) => (
+        <span
+          class={`xtick-label xtick-label-${t.anchor}`}
+          style={t.anchor === 'end' ? `right: ${(100 - t.leftPct).toFixed(3)}%` : `left: ${t.leftPct.toFixed(3)}%`}
+        >{t.date}</span>
+      ))
+    }
+  </div>
+</section>
+
+<style>
+  .usage {
+    position: relative;
+    border: 1px solid var(--border);
+    background: var(--bg-panel);
+    padding: var(--space-5);
+  }
+
+  .head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-4);
+    margin-bottom: var(--space-4);
+  }
+
+  .title {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: var(--size-sm);
+    color: var(--fg-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  .title .glyph {
+    color: var(--accent);
+    font-size: 0.65em;
+  }
+
+  .totals {
+    font-size: var(--size-sm);
+    color: var(--fg-dim);
+    letter-spacing: 0.02em;
+  }
+  .totals-tokens {
+    color: var(--fg);
+    font-weight: 600;
+  }
+  .totals-sep {
+    color: var(--muted);
+    margin: 0 var(--space-2);
+  }
+  .totals-range {
+    color: var(--fg-dim);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .chart-wrap {
+    position: relative; /* anchors HTML axis-label overlays (S069) */
+    width: 100%;
+    /* Fixed display height for the SVG; viewBox handles aspect inside. */
+    height: 160px;
+  }
+  .chart {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
+  /* Bars: accent fill, hairline border, hover brightens. */
+  .bar {
+    fill: var(--accent);
+    transition: filter var(--motion-fast) var(--easing);
+  }
+  .bar:hover {
+    filter: brightness(1.2);
+  }
+
+  /* Y-axis gridlines: dotted hairline, doesn't fight the bars. */
+  .grid {
+    stroke: var(--border);
+    stroke-width: 0.5;
+    stroke-dasharray: 1 3;
+  }
+
+  /* S069: axis labels render as HTML <span> overlays inside .chart-wrap so they
+     escape the SVG's preserveAspectRatio="none" horizontal stretch.
+     Previously these were SVG <text fill="..."> elements distorted ~1.83× wide
+     at 1440px viewport. */
+  .ytick-label,
+  .xtick-label {
+    position: absolute;
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--muted);
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+    pointer-events: none;
+    line-height: 1;
+  }
+  .ytick-label {
+    right: calc(100% - 38px);
+    width: 38px;
+    text-align: right;
+    transform: translateY(-50%);
+  }
+  .xtick-label {
+    bottom: 4px;
+  }
+  .xtick-label-middle { transform: translateX(-50%); }
+  /* xtick-label-start: no transform, label hangs right of the computed left% */
+  /* xtick-label-end:   uses `right` instead of `left`, no transform */
+
+  @media (max-width: 640px) {
+    .totals-range {
+      display: none;
+    }
+    .chart-wrap {
+      height: 140px;
+    }
+  }
+</style>

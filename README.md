@@ -1,6 +1,8 @@
 # AgenticOS
 
-Self-hosted CV + ops dashboard. Live at **[agenticos.sethsendom.com](https://agenticos.sethsendom.com)**.
+Self-hosted CV + ops dashboard.
+
+<img width="1194" height="1189" alt="Screenshot 2026-05-22 at 15 54 14" src="https://github.com/user-attachments/assets/691f0857-a3c5-4a5a-802a-ad3135c43a86" />
 
 A 7-agent orchestrator runs the build story-by-story from a kanban backlog. Each agent owns specific files, hands off via explicit STOP markers, and writes a verification log for the next step.
 

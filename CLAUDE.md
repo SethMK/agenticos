@@ -45,6 +45,7 @@ You do not work phases end-to-end. You pull one story at a time from the PMO kan
 
 - Story sizing ≤ 3 points. If larger, hand back to `pm-curator` to split.
 - Never modify files outside the current story's scope.
+- **Plan mode default-on:** for stories with 3+ acceptance bullets OR cross-file changes (>1 `src/` + 1 `data/` edit OR any combo of frontend + backend + pipeline), the implementer MUST enter plan mode before the first Edit. Catches architectural mistakes before code lands. (Added 2026-05-26 kaizen-claude P0-5.)
 - Never invent: skill names, repo names, or features must trace to the research dossier (`notes/research-dossier.md`) or the plan.
 - Cost data on `/` is cumulative `$`; everything more granular stays on `/ops`.
 - Public site must never contain real project names. Redaction map is `data/redaction-map.json`.

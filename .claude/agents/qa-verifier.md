@@ -31,6 +31,10 @@ Before passing, also verify:
 - `exports/public-board.json` parses with `jq '.'` (always).
 - The story's front-matter `status: review` and `done: null`.
 
+## Token self-report (mandatory)
+
+Before returning `pass`, invoke `/usage` and append the per-category breakdown (skills · subagents · plugins · MCP) to your done message in addition to the standard `implementer total_tokens_k · QA total_tokens_k · wall_min` line. Per PMO CLAUDE.md SPR-010 retro #3 ground-truth-vs-estimated split mandate. Skip only on `manual` verification (no execution = nothing to report).
+
 ## Constraints
 
 - Never edit story files yourself. Only the verify log.

@@ -23,6 +23,10 @@ import SpineTimeline from '../components/SpineTimeline.astro';
 import EpicChapter from '../components/EpicChapter.astro';
 import BuildReceipt from '../components/BuildReceipt.astro';
 import BurndownChart from '../components/BurndownChart.astro';
+import SprintBurnup from '../components/SprintBurnup.astro';
+import SprintVelocityTrend from '../components/SprintVelocityTrend.astro';
+import SprintAccuracyTokens from '../components/SprintAccuracyTokens.astro';
+import SprintAccuracyTime from '../components/SprintAccuracyTime.astro';
 import snapshot from '../../data/snapshots/public.json';
 
 // ── Type declarations ─────────────────────────────────────────────────────────
@@ -138,6 +142,12 @@ function fmtWallClock(min: number): string {
   return rem ? `~${h}h ${rem}m` : `~${h}h`;
 }
 const wallClockFmt = fmtWallClock(wallClockMin);
+
+// Weeks of Max (S061): project-scoped quota share — used_k / total_k gives share-of-week
+const weeksOfMaxRaw =
+  ((totals.weekly_quota_project_used_k as number | undefined) ?? 0) /
+  ((totals.weekly_quota_project_total_k as number | undefined) ?? 180000);
+const weeksOfMaxFmt = weeksOfMaxRaw < 0.1 ? '< 0.1 wk' : `${weeksOfMaxRaw.toFixed(1)} wk`;
 
 // ── Story lookup ──────────────────────────────────────────────────────────────
 
@@ -255,6 +265,95 @@ const unmappedIds = allKanbanIds.filter((s) => !mappedIds.has(s.id));
       <span class="accent">{totalStories} stories, {epics.length} epics, {storiesDone} already shipped</span> — the receipt is below.
     </p>
 
+    <!-- S091: 3 text sections BEFORE all existing content (after lede) -->
+
+    <!-- Problem Statement -->
+    <div class="section-rule" aria-hidden="true">
+      <span class="rule-line">──────────────────────────────────────</span>
+      <span class="rule-label">sprint · problem statement</span>
+      <span class="rule-line">──────────────────────────────────────</span>
+    </div>
+    <section class="s091-text-section" aria-label="Problem statement">
+      <h2 class="s091-section-heading">Problem</h2>
+      <p class="s091-body">
+        Personal development under a Claude Max weekly token cap requires predictable, controlled token burn.
+        The existing kanban tracks WHAT (stories shipped) but not HOW MUCH (tokens consumed) or HOW FAST
+        (wall-clock minutes elapsed). Without structure, story-by-story pulls drift into runaway sessions
+        that exhaust the weekly quota. Before this approach, a single deep-work session burned 1.5M tokens
+        in 90 minutes with no checkpoint.
+      </p>
+      <p class="s091-body">
+        The token window resets weekly but session overhead compounds: every tool-call, re-read of context,
+        and orchestrator round-trip adds silent overhead that is invisible in the kanban view. Scope creep
+        inside a session is the dominant failure mode — a "quick" feature pull balloons into re-reading
+        three agent docs and refactoring a shared component, consuming three times the estimated budget
+        before the acceptance bullets are even checked.
+      </p>
+    </section>
+
+    <!-- Solution -->
+    <div class="section-rule" aria-hidden="true">
+      <span class="rule-line">──────────────────────────────────────</span>
+      <span class="rule-label">sprint · solution</span>
+      <span class="rule-line">──────────────────────────────────────</span>
+    </div>
+    <section class="s091-text-section" aria-label="Solution">
+      <h2 class="s091-section-heading">Solution</h2>
+      <p class="s091-body">
+        The sprint-planner approach: 1-hour time-boxed sprints with MoSCoW-lite scope contract
+        (must-haves WILL ship, should-haves are droppable), two-budget tracking (work + overhead),
+        token-budget guard rails at 50/75/90/100% with hard-stop at 100%, role-based ceremony
+        (SM + PO sonnet agents + PM human), retro-driven self-improvement. Predictable cycles,
+        droppable scope, hard limits.
+      </p>
+      <p class="s091-body">
+        Each sprint opens with <code class="s091-code">/sprint-plan</code>: SM recommends capacity,
+        PO recommends story basket, PM negotiates scope and confirms. Execution runs a 60-minute
+        WIP=2 window — at most two stories in-flight simultaneously. Sprint closes with
+        <code class="s091-code">/sprint-close</code>: compute actuals, write demo dashboard,
+        four-agent parallel retro, decision sweep. The chain decision at close either loops to
+        the next sprint or halts. Guard rails enforce the budget contract so no session can silently
+        overrun.
+      </p>
+    </section>
+
+    <!-- Project Division -->
+    <div class="section-rule" aria-hidden="true">
+      <span class="rule-line">──────────────────────────────────────</span>
+      <span class="rule-label">sprint · project division</span>
+      <span class="rule-line">──────────────────────────────────────</span>
+    </div>
+    <section class="s091-text-section" aria-label="Project division">
+      <h2 class="s091-section-heading">Project Division</h2>
+      <p class="s091-body">
+        Milestone → Epic → Story hierarchy. M1 contains 8 shipped epics (E01–E08, the foundation
+        pipeline + dashboard). M2 is in progress (E09 Sprint Planner: 7/9 stories done).
+        M3 is deferred (E10 Productization). Stories sit under Epics; Epics roll up into Milestones;
+        Milestones are quarterly arcs.
+      </p>
+      <!-- TODO: migrate to pmo.milestones[] once export schema adds the field -->
+      <div class="s091-milestone-grid" aria-label="Milestone summary">
+        <div class="s091-milestone">
+          <span class="s091-m-label">M1</span>
+          <span class="s091-m-count">8 epics</span>
+          <span class="s091-m-detail">E01–E08 · shipped · foundation pipeline + dashboard</span>
+          <span class="s091-m-stories">~91 stories done</span>
+        </div>
+        <div class="s091-milestone">
+          <span class="s091-m-label">M2</span>
+          <span class="s091-m-count">1 epic (in progress)</span>
+          <span class="s091-m-detail">E09 · Sprint Planner · 7/9 stories done</span>
+          <span class="s091-m-stories">7 done, 2 remaining</span>
+        </div>
+        <div class="s091-milestone">
+          <span class="s091-m-label">M3</span>
+          <span class="s091-m-count">0 epics (deferred)</span>
+          <span class="s091-m-detail">E10 · Productization · not started</span>
+          <span class="s091-m-stories">0 stories done</span>
+        </div>
+      </div>
+    </section>
+
     <!-- 2. Headline stat row (B-style, 6 cards with corner brackets) -->
     <section class="stat-row" aria-label="Headline build stats">
       <span class="corner tl" aria-hidden="true"></span>
@@ -288,9 +387,9 @@ const unmappedIds = allKanbanIds.filter((s) => !mappedIds.has(s.id));
         <div class="stat-sub">{tokensInFmt} input · {tokensOutFmt} output</div>
       </div>
       <div class="stat-cell">
-        <div class="stat-k">Wall Clock</div>
-        <div class="stat-v">{wallClockFmt}</div>
-        <div class="stat-sub">done stories w/ actuals</div>
+        <div class="stat-k">Weeks of Max</div>
+        <div class="stat-v">{weeksOfMaxFmt}</div>
+        <div class="stat-sub">(est.)</div>
       </div>
     </section>
 
@@ -307,10 +406,346 @@ const unmappedIds = allKanbanIds.filter((s) => !mappedIds.has(s.id));
       Anthropic does not publish the exact Max 5x weekly token cap. The denominator uses a community-inferred estimate of ~180M tokens per week (the estimated global Max 5x budget). The projection band shows a 1.45×–1.86× bias-correction range derived from six-epic project actuals.
     </p>
 
+    <!-- Sprint burnup (S088 component, S089 mount) — live SPR-NNN execution -->
+    <div class="section-rule" aria-hidden="true">
+      <span class="rule-line">──────────────────────────────────────</span>
+      <span class="rule-label">sprint · live execution burnup</span>
+      <span class="rule-line">──────────────────────────────────────</span>
+    </div>
+
+    <SprintBurnup />
+
+    <!-- Sprint velocity trend (S096) — cross-sprint stacked bars -->
+    <div class="section-rule" aria-hidden="true">
+      <span class="rule-line">──────────────────────────────────────</span>
+      <span class="rule-label">sprint · velocity trend across closed sprints</span>
+      <span class="rule-line">──────────────────────────────────────</span>
+    </div>
+
+    <SprintVelocityTrend />
+
+    <!-- Sprint accuracy (tokens) (S094) — plan-vs-actual stacked bars -->
+    <div class="section-rule" aria-hidden="true">
+      <span class="rule-line">──────────────────────────────────────</span>
+      <span class="rule-label">sprint · accuracy (tokens)</span>
+      <span class="rule-line">──────────────────────────────────────</span>
+    </div>
+
+    <SprintAccuracyTokens />
+
+    <!-- Sprint accuracy (time) (S095) — plan-vs-actual wall-clock stacked bars -->
+    <div class="section-rule" aria-hidden="true">
+      <span class="rule-line">──────────────────────────────────────</span>
+      <span class="rule-label">sprint · accuracy (time)</span>
+      <span class="rule-line">──────────────────────────────────────</span>
+    </div>
+
+    <SprintAccuracyTime />
+
+    <!-- S091: 3 diagram sections — Sprint Loop, Process Roles, Dev-Team Mapping -->
+
+    <!-- Sprint Loop Diagram -->
+    <div class="section-rule" aria-hidden="true">
+      <span class="rule-line">──────────────────────────────────────</span>
+      <span class="rule-label">sprint · loop diagram</span>
+      <span class="rule-line">──────────────────────────────────────</span>
+    </div>
+    <section class="s091-diagram-section" aria-label="Sprint loop flow diagram">
+      <h2 class="s091-section-heading">Sprint Loop</h2>
+      <p class="s091-diagram-caption">
+        Top-down execution flow: planning ceremony → EXECUTION window (60 min, WIP=2) →
+        close ceremony → chain decision. Guard rails enforce token budget contract.
+        Shapes: rectangles = phases, diamonds = decision gates, parallelograms = actions.
+      </p>
+
+      <div class="s091-diagram-wrap">
+        <svg
+          class="s091-svg"
+          viewBox="0 0 480 920"
+          preserveAspectRatio="xMidYMid meet"
+          role="img"
+          aria-label="Sprint loop: /sprint-plan → budget check → basket selection → EXECUTION → /sprint-close → retro → CHAIN decision"
+        >
+          <!-- PLANNING PHASE nodes (solid --accent border) -->
+          <!-- /sprint-plan -->
+          <rect class="node-plan" x="140" y="20" width="200" height="44" />
+          <!-- Q0 staleness? -->
+          <polygon class="node-decision" points="240,90 320,114 240,138 160,114" />
+          <!-- refresh pipeline (conditional action) -->
+          <rect class="node-action" x="345" y="100" width="115" height="28" rx="2" />
+          <!-- Q1 budget % -->
+          <polygon class="node-decision" points="240,164 320,188 240,212 160,188" />
+          <!-- Q2 source split -->
+          <polygon class="node-decision" points="240,228 320,252 240,276 160,252" />
+          <!-- Q3 story basket -->
+          <polygon class="node-decision" points="240,292 320,316 240,340 160,316" />
+          <!-- Q4 improvement (conditional) -->
+          <polygon class="node-decision" points="240,356 320,380 240,404 160,380" />
+          <!-- confirm -->
+          <parallelogram-placeholder />
+          <polygon class="node-action-para" points="170,420 310,420 330,448 150,448" />
+
+          <!-- EXECUTION PHASE node -->
+          <!-- EXECUTION box -->
+          <rect class="node-exec" x="120" y="474" width="240" height="52" />
+
+          <!-- CLOSE PHASE nodes (--accent-dim border) -->
+          <!-- /sprint-close -->
+          <rect class="node-close" x="140" y="556" width="200" height="44" />
+          <!-- compute actuals -->
+          <polygon class="node-action-para-close" points="170,618 310,618 330,646 150,646" />
+          <!-- write Demo dashboard -->
+          <polygon class="node-action-para-close" points="170,656 310,656 330,684 150,684" />
+          <!-- retro proposal (4-agent parallel) -->
+          <polygon class="node-action-para-close" points="170,694 310,694 330,722 150,722" />
+          <!-- decision sweep -->
+          <polygon class="node-action-para-close" points="170,732 310,732 330,760 150,760" />
+
+          <!-- CHAIN decision diamond -->
+          <polygon class="node-decision-chain" points="240,790 330,820 240,850 150,820" />
+
+          <!-- Connector arrows (vertical flow) -->
+          <!-- /sprint-plan → Q0 -->
+          <line class="flow-arrow" x1="240" y1="64" x2="240" y2="90" marker-end="url(#arrowhead)" />
+          <!-- Q0 → Q1 (straight) -->
+          <line class="flow-arrow" x1="240" y1="138" x2="240" y2="164" marker-end="url(#arrowhead)" />
+          <!-- Q0 → refresh pipeline (side branch) -->
+          <line class="flow-arrow-dim" x1="320" y1="114" x2="345" y2="114" marker-end="url(#arrowhead-dim)" />
+          <!-- refresh → back to Q0 -->
+          <path class="flow-arrow-dim" d="M 460 114 Q 470 80 410 74 Q 380 68 330 75" fill="none" marker-end="url(#arrowhead-dim)" />
+          <!-- Q1 → Q2 -->
+          <line class="flow-arrow" x1="240" y1="212" x2="240" y2="228" marker-end="url(#arrowhead)" />
+          <!-- Q2 → Q3 -->
+          <line class="flow-arrow" x1="240" y1="276" x2="240" y2="292" marker-end="url(#arrowhead)" />
+          <!-- Q3 → Q4 -->
+          <line class="flow-arrow" x1="240" y1="340" x2="240" y2="356" marker-end="url(#arrowhead)" />
+          <!-- Q4 → confirm -->
+          <line class="flow-arrow" x1="240" y1="404" x2="240" y2="420" marker-end="url(#arrowhead)" />
+          <!-- confirm → EXECUTION -->
+          <line class="flow-arrow" x1="240" y1="448" x2="240" y2="474" marker-end="url(#arrowhead)" />
+          <!-- EXECUTION → /sprint-close -->
+          <line class="flow-arrow" x1="240" y1="526" x2="240" y2="556" marker-end="url(#arrowhead)" />
+          <!-- /sprint-close → compute actuals -->
+          <line class="flow-arrow" x1="240" y1="600" x2="240" y2="618" marker-end="url(#arrowhead)" />
+          <!-- compute actuals → write demo -->
+          <line class="flow-arrow" x1="240" y1="646" x2="240" y2="656" marker-end="url(#arrowhead)" />
+          <!-- write demo → retro -->
+          <line class="flow-arrow" x1="240" y1="684" x2="240" y2="694" marker-end="url(#arrowhead)" />
+          <!-- retro → decision sweep -->
+          <line class="flow-arrow" x1="240" y1="722" x2="240" y2="732" marker-end="url(#arrowhead)" />
+          <!-- decision sweep → CHAIN -->
+          <line class="flow-arrow" x1="240" y1="760" x2="240" y2="790" marker-end="url(#arrowhead)" />
+          <!-- CHAIN → yes loop back to /sprint-plan -->
+          <path class="flow-arrow-loop" d="M 150 820 Q 80 820 80 42 Q 80 10 140 10" fill="none" marker-end="url(#arrowhead-loop)" />
+          <!-- CHAIN → no → done -->
+          <line class="flow-arrow-done" x1="330" y1="820" x2="400" y2="820" marker-end="url(#arrowhead-done)" />
+
+          <!-- Arrow marker definitions -->
+          <defs>
+            <marker id="arrowhead" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+              <path d="M 0 0 L 6 3 L 0 6 Z" class="arrow-fill" />
+            </marker>
+            <marker id="arrowhead-dim" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+              <path d="M 0 0 L 6 3 L 0 6 Z" class="arrow-fill-dim" />
+            </marker>
+            <marker id="arrowhead-loop" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+              <path d="M 0 0 L 6 3 L 0 6 Z" class="arrow-fill-loop" />
+            </marker>
+            <marker id="arrowhead-done" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+              <path d="M 0 0 L 6 3 L 0 6 Z" class="arrow-fill-done" />
+            </marker>
+          </defs>
+        </svg>
+
+        <!-- HTML-overlay labels (per brief B2: HTML-overlay NOT SVG <text>)
+             Coordinates are % of container (480×920 viewBox → padding-top:191.67% trick) -->
+        <div class="s091-overlay-wrap" aria-hidden="true">
+          <!-- Planning phase labels (y/920*100%, x/480*100%) -->
+          <span class="s091-node-label s091-plan" style="top:4.6%;left:50%;transform:translateX(-50%);">/sprint-plan</span>
+          <span class="s091-node-label s091-decision" style="top:11.6%;left:50%;transform:translateX(-50%);">Q0 staleness?</span>
+          <span class="s091-node-label s091-action" style="top:11.4%;left:74%;">refresh pipeline</span>
+          <span class="s091-node-label s091-decision" style="top:19.7%;left:50%;transform:translateX(-50%);">Q1 budget %</span>
+          <span class="s091-node-label s091-decision" style="top:26.6%;left:50%;transform:translateX(-50%);">Q2 source split</span>
+          <span class="s091-node-label s091-decision" style="top:33.5%;left:50%;transform:translateX(-50%);">Q3 story basket</span>
+          <span class="s091-node-label s091-decision" style="top:40.4%;left:50%;transform:translateX(-50%);">Q4 improvement</span>
+          <span class="s091-node-label s091-action" style="top:46.4%;left:50%;transform:translateX(-50%);">confirm</span>
+          <!-- Execution phase label -->
+          <span class="s091-node-label s091-exec" style="top:53.5%;left:50%;transform:translateX(-50%);">EXECUTION · 60 min · WIP=2</span>
+          <!-- Close phase labels -->
+          <span class="s091-node-label s091-close" style="top:61.5%;left:50%;transform:translateX(-50%);">/sprint-close</span>
+          <span class="s091-node-label s091-action-close" style="top:67.9%;left:50%;transform:translateX(-50%);">compute actuals</span>
+          <span class="s091-node-label s091-action-close" style="top:71.9%;left:50%;transform:translateX(-50%);">write Demo dashboard</span>
+          <span class="s091-node-label s091-action-close" style="top:75.9%;left:50%;transform:translateX(-50%);">retro proposal (4-agent ‖)</span>
+          <span class="s091-node-label s091-action-close" style="top:79.9%;left:50%;transform:translateX(-50%);">decision sweep</span>
+          <!-- Chain decision -->
+          <span class="s091-node-label s091-decision-chain" style="top:88.6%;left:50%;transform:translateX(-50%);">CHAIN?</span>
+          <!-- Yes / No labels -->
+          <span class="s091-edge-label" style="top:88.5%;left:12%;">yes →</span>
+          <span class="s091-edge-label" style="top:88.5%;left:72%;">no →</span>
+          <span class="s091-edge-label s091-done-label" style="top:88.5%;left:84%;">done</span>
+        </div>
+      </div>
+
+      <!-- Legend -->
+      <div class="s091-legend" aria-label="Diagram legend: phase encoding">
+        <span class="s091-leg-item"><span class="s091-leg-swatch s091-leg-plan"></span>planning</span>
+        <span class="s091-leg-item"><span class="s091-leg-swatch s091-leg-exec"></span>execution</span>
+        <span class="s091-leg-item"><span class="s091-leg-swatch s091-leg-close"></span>close</span>
+        <span class="s091-leg-item"><span class="s091-leg-swatch s091-leg-decision"></span>decision</span>
+      </div>
+
+      <!-- Textual fallback list (accessibility) -->
+      <ol class="s091-fallback-list" aria-label="Sprint loop sequence (text)">
+        <li>/sprint-plan (planning)</li>
+        <li>Q0 staleness check → refresh pipeline if stale</li>
+        <li>Q1 budget % · Q2 source split · Q3 story basket · Q4 improvement</li>
+        <li>confirm</li>
+        <li>EXECUTION — 60 min window, WIP=2</li>
+        <li>/sprint-close (close)</li>
+        <li>compute actuals · write Demo dashboard · retro proposal · decision sweep</li>
+        <li>CHAIN? — yes: loop to /sprint-plan · no: done</li>
+      </ol>
+    </section>
+
+    <!-- Process Roles Diagram -->
+    <div class="section-rule" aria-hidden="true">
+      <span class="rule-line">──────────────────────────────────────</span>
+      <span class="rule-label">sprint · process roles</span>
+      <span class="rule-line">──────────────────────────────────────</span>
+    </div>
+    <section class="s091-diagram-section" aria-label="Sprint process roles diagram">
+      <h2 class="s091-section-heading">Process Roles</h2>
+      <p class="s091-diagram-caption">
+        Role assignments for /sprint-plan (left) and /sprint-close (right).
+        SM = Scrum Master (sonnet agent), PO = Product Owner (sonnet agent),
+        PM = Product Manager (human, Marcin). Opacity: agents dimmer, PM full accent.
+      </p>
+
+      <div class="s091-roles-wrap">
+        <!-- /sprint-plan column -->
+        <div class="s091-roles-col">
+          <div class="s091-col-header">/sprint-plan</div>
+          <div class="s091-role-box s091-role-agent">
+            <span class="s091-role-tag">SM</span>
+            <span class="s091-role-title">Scrum Master</span>
+            <span class="s091-role-sub">sonnet agent</span>
+            <span class="s091-role-resp">capacity recommendation (Q1)</span>
+          </div>
+          <div class="s091-role-box s091-role-agent">
+            <span class="s091-role-tag">PO</span>
+            <span class="s091-role-title">Product Owner</span>
+            <span class="s091-role-sub">sonnet agent</span>
+            <span class="s091-role-resp">basket recommendations (Q3, Q4)</span>
+          </div>
+          <div class="s091-role-box s091-role-human">
+            <span class="s091-role-tag">PM</span>
+            <span class="s091-role-title">Product Manager</span>
+            <span class="s091-role-sub">human · Marcin</span>
+            <span class="s091-role-resp">negotiation answers Q0–Q4 + confirm</span>
+          </div>
+        </div>
+
+        <!-- /sprint-close column -->
+        <div class="s091-roles-col">
+          <div class="s091-col-header">/sprint-close</div>
+          <div class="s091-role-box s091-role-agent">
+            <span class="s091-role-tag">PO</span>
+            <span class="s091-role-title">Product Owner</span>
+            <span class="s091-role-sub">sonnet agent</span>
+            <span class="s091-role-resp">Demo dashboard + acceptance verdicts</span>
+          </div>
+          <div class="s091-role-box s091-role-agent">
+            <span class="s091-role-tag">SM</span>
+            <span class="s091-role-title">Scrum Master</span>
+            <span class="s091-role-sub">sonnet agent</span>
+            <span class="s091-role-resp">retro proposal top-10</span>
+          </div>
+          <div class="s091-role-box s091-role-human">
+            <span class="s091-role-tag">PM</span>
+            <span class="s091-role-title">Product Manager</span>
+            <span class="s091-role-sub">human · Marcin</span>
+            <span class="s091-role-resp">decision sweep top-3</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Dev-Team Mapping Diagram -->
+    <div class="section-rule" aria-hidden="true">
+      <span class="rule-line">──────────────────────────────────────</span>
+      <span class="rule-label">sprint · dev-team mapping</span>
+      <span class="rule-line">──────────────────────────────────────</span>
+    </div>
+    <section class="s091-diagram-section" aria-label="Dev-team role mapping diagram">
+      <h2 class="s091-section-heading">Dev-Team Mapping</h2>
+      <p class="s091-diagram-caption">
+        5 dev-team roles per plan L.1. <code class="s091-code">sprint-config.yaml</code> not
+        present in this repo — all roles render as fallback. Development Orchestrator drives the
+        main thread; sub-agents are spawned per story.
+      </p>
+
+      <div class="s091-devteam-wrap">
+        <!-- Orchestrator (top) -->
+        <div class="s091-devteam-orch s091-role-fallback">
+          <span class="s091-dt-tag">ORCH</span>
+          <span class="s091-dt-title">Development Orchestrator</span>
+          <span class="s091-dt-sub">Opus · claude-main thread</span>
+          <span class="s091-dt-resp">pulls story / spawns sub-agents / moves card</span>
+          <span class="s091-dt-fallback">(not mapped — using fallback)</span>
+        </div>
+
+        <!-- Connector line from orch to children -->
+        <div class="s091-devteam-connector" aria-hidden="true">
+          <svg class="s091-connector-svg" viewBox="0 0 400 40" preserveAspectRatio="xMidYMid meet" role="presentation" aria-hidden="true">
+            <line class="flow-arrow-dim" x1="200" y1="0" x2="200" y2="10" />
+            <line class="flow-arrow-dim" x1="40" y1="10" x2="360" y2="10" />
+            <line class="flow-arrow-dim" x1="80" y1="10" x2="80" y2="40" marker-end="url(#arrowhead-dim2)" />
+            <line class="flow-arrow-dim" x1="160" y1="10" x2="160" y2="40" marker-end="url(#arrowhead-dim2)" />
+            <line class="flow-arrow-dim" x1="200" y1="10" x2="200" y2="40" marker-end="url(#arrowhead-dim2)" />
+            <line class="flow-arrow-dim" x1="280" y1="10" x2="280" y2="40" marker-end="url(#arrowhead-dim2)" />
+            <line class="flow-arrow-dim" x1="320" y1="10" x2="320" y2="40" marker-end="url(#arrowhead-dim2)" />
+            <defs>
+              <marker id="arrowhead-dim2" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto">
+                <path d="M 0 0 L 5 2.5 L 0 5 Z" class="arrow-fill-dim" />
+              </marker>
+            </defs>
+          </svg>
+        </div>
+
+        <!-- 4 child roles -->
+        <div class="s091-devteam-children">
+          <div class="s091-devteam-child s091-role-fallback">
+            <span class="s091-dt-tag">ARCH</span>
+            <span class="s091-dt-title">Architect</span>
+            <span class="s091-dt-sub">optional · L-bucket only</span>
+            <span class="s091-dt-fallback">(not mapped — using fallback)</span>
+          </div>
+          <div class="s091-devteam-child s091-role-fallback">
+            <span class="s091-dt-tag">DEV</span>
+            <span class="s091-dt-title">Developer</span>
+            <span class="s091-dt-sub">primary implementer</span>
+            <span class="s091-dt-fallback">(not mapped — using fallback)</span>
+          </div>
+          <div class="s091-devteam-child s091-role-fallback">
+            <span class="s091-dt-tag">QA</span>
+            <span class="s091-dt-title">QA Reviewer</span>
+            <span class="s091-dt-sub">acceptance check</span>
+            <span class="s091-dt-fallback">(not mapped — using fallback)</span>
+          </div>
+          <div class="s091-devteam-child s091-role-fallback">
+            <span class="s091-dt-tag">TEST</span>
+            <span class="s091-dt-title">Tester</span>
+            <span class="s091-dt-sub">e2e verification</span>
+            <span class="s091-dt-fallback">(not mapped — using fallback)</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- 4. Spine timeline (A-style) -->
     <div class="section-rule" aria-hidden="true">
       <span class="rule-line">──────────────────────────────────────</span>
-      <span class="rule-label">spine · six epics, ordered by birth</span>
+      <span class="rule-label">spine · {epics.length} epics, ordered by birth</span>
       <span class="rule-line">──────────────────────────────────────</span>
     </div>
 
@@ -623,5 +1058,449 @@ const unmappedIds = allKanbanIds.filter((s) => !mappedIds.has(s.id));
     .page-title { font-size: 20px; }
     .hiw-page::before,
     .hiw-page::after { display: none; }
+  }
+
+  /* ── S091: Text sections ───────────────────────────────────── */
+  .s091-text-section {
+    margin: 0 0 8px;
+  }
+  .s091-section-heading {
+    margin: 0 0 10px;
+    font-family: var(--font-mono);
+    font-size: var(--size-sm);
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+  .s091-body {
+    margin: 0 0 12px;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--fg-dim);
+    line-height: 1.65;
+    max-width: 80ch;
+  }
+  .s091-code {
+    color: var(--accent-dim);
+    background: var(--bg-panel);
+    padding: 0 4px;
+    font-size: 12px;
+    border: 1px solid var(--border);
+  }
+
+  /* Milestone grid */
+  .s091-milestone-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1px;
+    border: 1px solid var(--border);
+    background: var(--border);
+    margin: 8px 0 0;
+  }
+  .s091-milestone {
+    background: var(--bg-panel);
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .s091-m-label {
+    font-family: var(--font-display);
+    font-size: 24px;
+    font-weight: 600;
+    color: var(--accent);
+    letter-spacing: -0.01em;
+    line-height: 1.1;
+  }
+  .s091-m-count {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--fg);
+    letter-spacing: 0.04em;
+  }
+  .s091-m-detail {
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 0.02em;
+    line-height: 1.5;
+  }
+  .s091-m-stories {
+    font-size: 10px;
+    color: var(--fg-dim);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-top: 4px;
+  }
+
+  /* ── S091: Diagram sections ────────────────────────────────── */
+  .s091-diagram-section {
+    margin: 0 0 16px;
+  }
+  .s091-diagram-caption {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--fg-dim);
+    line-height: 1.6;
+    max-width: 80ch;
+    margin: 0 0 16px;
+  }
+
+  /* Sprint Loop Diagram */
+  .s091-diagram-wrap {
+    position: relative;
+    border: 1px solid var(--border);
+    background: var(--bg-panel);
+    overflow: hidden;
+    max-width: 480px;
+    width: 100%;
+    margin: 0 auto;
+    /* aspect-ratio maintains 480:920 so HTML overlay % positions match SVG viewBox */
+    aspect-ratio: 480 / 920;
+  }
+  .s091-svg {
+    display: block;
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+  }
+
+  /* SVG node shape classes */
+  .node-plan {
+    fill: none;
+    stroke: var(--accent);
+    stroke-width: 2;
+  }
+  .node-close {
+    fill: none;
+    stroke: var(--accent-dim);
+    stroke-width: 1.5;
+    stroke-dasharray: 4 2;
+  }
+  .node-exec {
+    fill: var(--accent);
+    stroke: var(--accent);
+    stroke-width: 2;
+    opacity: 0.9;
+  }
+  .node-decision {
+    fill: none;
+    stroke: var(--border-strong);
+    stroke-width: 1.5;
+  }
+  .node-decision-chain {
+    fill: none;
+    stroke: var(--accent-dim);
+    stroke-width: 2;
+    stroke-dasharray: 4 2;
+  }
+  .node-action {
+    fill: none;
+    stroke: var(--muted);
+    stroke-width: 1;
+    stroke-dasharray: 3 2;
+    opacity: 0.7;
+  }
+  .node-action-para {
+    fill: none;
+    stroke: var(--border-strong);
+    stroke-width: 1;
+  }
+  .node-action-para-close {
+    fill: none;
+    stroke: var(--accent-dim);
+    stroke-width: 1;
+    opacity: 0.7;
+  }
+
+  /* Connector arrows */
+  .flow-arrow {
+    stroke: var(--fg-dim);
+    stroke-width: 1.5;
+    fill: none;
+  }
+  .flow-arrow-dim {
+    stroke: var(--muted);
+    stroke-width: 1;
+    fill: none;
+    stroke-dasharray: 3 2;
+  }
+  .flow-arrow-loop {
+    stroke: var(--accent-dim);
+    stroke-width: 1.5;
+    fill: none;
+    stroke-dasharray: 5 3;
+  }
+  .flow-arrow-done {
+    stroke: var(--fg-dim);
+    stroke-width: 1.5;
+    fill: none;
+  }
+  .arrow-fill { fill: var(--fg-dim); }
+  .arrow-fill-dim { fill: var(--muted); }
+  .arrow-fill-loop { fill: var(--accent-dim); }
+  .arrow-fill-done { fill: var(--fg-dim); }
+
+  /* HTML overlay labels for Sprint Loop
+     The container uses padding-top trick so overlay fills the same space */
+  .s091-overlay-wrap {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    overflow: hidden;
+  }
+  .s091-node-label {
+    position: absolute;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    white-space: nowrap;
+    pointer-events: none;
+    line-height: 1;
+    transform-origin: center;
+  }
+  /* Phase-specific label colors */
+  .s091-plan           { color: var(--accent); font-weight: 600; font-size: 11px; }
+  .s091-close          { color: var(--accent-dim); font-weight: 600; font-size: 11px; }
+  .s091-exec           { color: var(--accent-ink); font-weight: 700; font-size: 11px; }
+  .s091-decision       { color: var(--fg-dim); }
+  .s091-decision-chain { color: var(--accent-dim); font-weight: 600; }
+  .s091-action         { color: var(--muted); font-size: 9px; }
+  .s091-action-close   { color: var(--accent-dim); font-size: 9px; opacity: 0.85; }
+  .s091-edge-label     { color: var(--muted); font-size: 9px; }
+  .s091-done-label     { color: var(--fg-dim); }
+
+  /* Sprint Loop legend */
+  .s091-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3) var(--space-5);
+    margin-top: var(--space-3);
+    font-size: 10px;
+    color: var(--fg-dim);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    max-width: 480px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+  .s091-leg-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  .s091-leg-swatch {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border: 1px solid transparent;
+    flex-shrink: 0;
+  }
+  .s091-leg-plan     { border-color: var(--accent); border-width: 2px; }
+  .s091-leg-exec     { background: var(--accent); }
+  .s091-leg-close    { border-color: var(--accent-dim); border-style: dashed; }
+  .s091-leg-decision { border-color: var(--border-strong); transform: rotate(45deg); width: 10px; height: 10px; }
+
+  /* Fallback list (visually hidden, accessible) */
+  .s091-fallback-list {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  /* ── Process Roles Diagram ─────────────────────────────────── */
+  .s091-roles-wrap {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    margin: 0;
+  }
+  .s091-roles-col {
+    background: var(--bg-panel);
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .s091-col-header {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.10em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 4px;
+    padding-bottom: 8px;
+    border-bottom: 1px dotted var(--border-strong);
+  }
+  .s091-role-box {
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .s091-role-agent {
+    opacity: 0.65;
+  }
+  .s091-role-human {
+    border-color: var(--accent-dim);
+    opacity: 1.0;
+  }
+  .s091-role-tag {
+    font-family: var(--font-display);
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--accent);
+    letter-spacing: -0.01em;
+    line-height: 1.1;
+  }
+  .s091-role-agent .s091-role-tag {
+    color: var(--fg-dim);
+  }
+  .s091-role-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--fg);
+    letter-spacing: 0.04em;
+  }
+  .s091-role-sub {
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 0.06em;
+  }
+  .s091-role-resp {
+    font-size: 10px;
+    color: var(--fg-dim);
+    letter-spacing: 0.02em;
+    margin-top: 4px;
+    line-height: 1.4;
+  }
+
+  /* ── Dev-Team Mapping Diagram ─────────────────────────────── */
+  .s091-devteam-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+    border: 1px solid var(--border);
+    background: var(--bg-panel);
+    padding: 16px;
+  }
+  .s091-devteam-orch {
+    width: 100%;
+    max-width: 360px;
+    padding: 12px 16px;
+    border: 1px solid var(--border-strong);
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    text-align: center;
+    align-items: center;
+  }
+  .s091-devteam-connector {
+    width: 100%;
+    max-width: 400px;
+  }
+  .s091-connector-svg {
+    display: block;
+    width: 100%;
+    height: 40px;
+  }
+  .s091-devteam-children {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1px;
+    background: var(--border);
+    width: 100%;
+    border: 1px solid var(--border);
+  }
+  .s091-devteam-child {
+    background: var(--bg-panel);
+    padding: 10px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    align-items: center;
+    text-align: center;
+  }
+  .s091-role-fallback {
+    opacity: 0.5;
+  }
+  .s091-dt-tag {
+    font-family: var(--font-display);
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--fg-dim);
+    letter-spacing: -0.01em;
+    line-height: 1.1;
+  }
+  .s091-dt-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--fg-dim);
+    letter-spacing: 0.04em;
+  }
+  .s091-dt-sub {
+    font-size: 9px;
+    color: var(--muted);
+    letter-spacing: 0.06em;
+  }
+  .s091-dt-resp {
+    font-size: 9px;
+    color: var(--fg-dim);
+    letter-spacing: 0.02em;
+    margin-top: 3px;
+    line-height: 1.4;
+  }
+  .s091-dt-fallback {
+    font-size: 9px;
+    color: var(--muted);
+    letter-spacing: 0.04em;
+    font-style: italic;
+    margin-top: 4px;
+    border-top: 1px dotted var(--border);
+    padding-top: 3px;
+  }
+
+  /* ── S091 Mobile reflow (390px) ─────────────────────────────── */
+  @media (max-width: 640px) {
+    .s091-milestone-grid {
+      grid-template-columns: 1fr;
+    }
+    .s091-diagram-wrap {
+      max-width: 360px;
+    }
+    /* Diagram 2: collapse to single column */
+    .s091-roles-wrap {
+      grid-template-columns: 1fr;
+    }
+    /* Diagram 3: collapse children to 2 columns */
+    .s091-devteam-children {
+      grid-template-columns: repeat(2, 1fr);
+    }
+    .s091-devteam-orch {
+      max-width: 100%;
+    }
+    /* Overlay label font sizes scale down */
+    .s091-node-label {
+      font-size: 8px;
+    }
+    .s091-plan, .s091-close, .s091-exec {
+      font-size: 9px;
+    }
+    .s091-legend {
+      max-width: 360px;
+    }
   }
 </style>

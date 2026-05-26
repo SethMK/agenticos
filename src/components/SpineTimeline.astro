@@ -46,7 +46,7 @@ function epochPct(e: EpicEntry): number {
 <section class="spine" aria-label="Epic timeline">
   <span class="bl" aria-hidden="true"></span>
   <span class="br" aria-hidden="true"></span>
-  <div class="spine-label">BUILD SPINE · SIX EPICS, ORDERED BY BIRTH</div>
+  <div class="spine-label">BUILD SPINE · {epics.length} EPICS, ORDERED BY BIRTH</div>
   <div class="spine-grid">
     {epics.map((e) => {
       const cls = epochClass(e);

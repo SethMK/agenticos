@@ -1,0 +1,56 @@
+---
+/**
+ * SprintAccuracyTokens.astro — S094
+ *
+ * Per-sprint accuracy (tokens): plan-vs-actual stacked bars driven by the
+ * StackedBarSprintComparison base.
+ *
+ *   - Column A (plan)   = planned_must_have_budget_k + planned_overhead_budget_k
+ *   - Column B (actual) = actual_must_have_tokens_k  + actual_overhead_tokens_k
+ *   - Variance flag: actual_total > plan_total × 1.5  →  ↑ in --danger
+ *
+ * Reads real data/snapshots/public.json → .pmo.closed_sprints[]. No mock data.
+ */
+import StackedBarSprintComparison from './StackedBarSprintComparison.astro';
+import snapshot from '../../data/snapshots/public.json';
+
+interface ClosedSprintRaw {
+  sprint_id: string;
+  planned_must_have_budget_k: number;
+  planned_overhead_budget_k: number;
+  actual_must_have_tokens_k: number;
+  actual_overhead_tokens_k: number;
+  actual_work_tokens_k: number;
+  actual_total_tokens_k: number;
+  planned_duration_min: number;
+  actual_wall_clock_min: number;
+  must_have_shipped_ids?: string[];
+}
+
+const pmo = (snapshot as Record<string, unknown>).pmo as {
+  closed_sprints?: ClosedSprintRaw[];
+} | undefined;
+
+const closed_sprints = pmo?.closed_sprints ?? [];
+
+const VARIANCE_THRESHOLD = 1.5;
+---
+
+<StackedBarSprintComparison
+  data={closed_sprints}
+  columnAExtractor={(s) => ({
+    mustK: s.planned_must_have_budget_k,
+    overheadK: s.planned_overhead_budget_k,
+  })}
+  columnBExtractor={(s) => ({
+    mustK: s.actual_must_have_tokens_k,
+    overheadK: s.actual_overhead_tokens_k,
+  })}
+  columnALabel="plan"
+  columnBLabel="actual"
+  axisLabel="tokens (k)"
+  unitSuffix="k"
+  varianceFlagThreshold={VARIANCE_THRESHOLD}
+  title="ACCURACY (TOKENS)"
+  ariaLabel={`Sprint accuracy (tokens) across ${closed_sprints.length} closed sprints. Plan-and-actual stacked bars per sprint, overrun threshold ${VARIANCE_THRESHOLD}x.`}
+/>

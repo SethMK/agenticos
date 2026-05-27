@@ -1,0 +1,516 @@
+---
+/**
+ * StackedBarSprintComparison.astro — S094 (extracted as shared base)
+ *
+ * Parameterised stacked-bar comparison renderer for per-sprint plan-vs-actual
+ * accuracy charts. Each closed sprint renders as a group of two stacked
+ * columns (A = expected, B = observed), each column with two segments
+ * (must-have bottom + overhead top). Variance ratio = sumB / sumA;
+ * columns where ratio > varianceFlagThreshold get a ↑ glyph in --danger.
+ *
+ * Consumers (current):
+ *   - SprintAccuracyTokens.astro (S094) — token extractors, unit 'k'
+ *   - SprintAccuracyTime.astro   (S095) — minute extractors, unit 'min'
+ *
+ * Constraints (carried from S088/S096):
+ *   - Hand-rolled SVG, zero client JS.
+ *   - Design tokens only inside <style> chart elements (no hex).
+ *   - preserveAspectRatio="xMidYMid meet" — never "none" (S069 bug).
+ *   - Axis tick labels rendered as in-SVG <text> so they share the SVG
+ *     coordinate system with the bars (S096 alignment fix).
+ *   - Empty-state: no axes / no flags / no reference scaffolding.
+ */
+
+interface ClosedSprint {
+  sprint_id: string;
+  planned_must_have_budget_k: number;
+  planned_overhead_budget_k: number;
+  actual_must_have_tokens_k: number;
+  actual_overhead_tokens_k: number;
+  actual_work_tokens_k: number;
+  actual_total_tokens_k: number;
+  planned_duration_min: number;
+  actual_wall_clock_min: number;
+  must_have_shipped_ids?: string[];
+  [key: string]: unknown;
+}
+
+interface ColumnExtract {
+  mustK: number;
+  overheadK: number;
+}
+
+interface Props {
+  data: ClosedSprint[];
+  columnAExtractor: (s: ClosedSprint) => ColumnExtract;
+  columnBExtractor: (s: ClosedSprint) => ColumnExtract;
+  columnALabel: string;
+  columnBLabel: string;
+  axisLabel: string;
+  unitSuffix: 'k' | 'min';
+  varianceFlagThreshold: number;
+  title: string;
+  footerText?: string;
+  ariaLabel: string;
+}
+
+const {
+  data,
+  columnAExtractor,
+  columnBExtractor,
+  columnALabel,
+  columnBLabel,
+  axisLabel,
+  unitSuffix,
+  varianceFlagThreshold,
+  title,
+  footerText,
+  ariaLabel,
+} = Astro.props as Props;
+
+const hasSprints = data.length > 0;
+
+// ── Per-sprint extraction + flag ──────────────────────────────────────────
+const sprints = data.map(s => {
+  const a = columnAExtractor(s);
+  const b = columnBExtractor(s);
+  const aTotal = a.mustK + a.overheadK;
+  const bTotal = b.mustK + b.overheadK;
+  const ratio = aTotal > 0 ? bTotal / aTotal : 0;
+  const isOverrun = ratio > varianceFlagThreshold;
+  return {
+    sprint_id: s.sprint_id,
+    a, b, aTotal, bTotal, ratio, isOverrun,
+  };
+});
+
+const rawMax = sprints.reduce((m, s) => Math.max(m, s.aTotal, s.bTotal), 0);
+const Y_MAX = rawMax > 0 ? rawMax * 1.15 : 100;
+
+// ── SVG geometry ──────────────────────────────────────────────────────────
+const VB_W = 600;
+const VB_H = 220;
+const PAD_TOP    = 20;
+const PAD_BOTTOM = 48;  // x-axis (sprint id) + "plan/actual" sub-label row
+const PAD_LEFT   = 32;  // y-axis tick labels live in SVG, need room
+const PAD_RIGHT  = 8;
+
+const PLOT_W = VB_W - PAD_LEFT - PAD_RIGHT;
+const PLOT_H = VB_H - PAD_TOP - PAD_BOTTOM;
+
+function yV(v: number): number {
+  return PAD_TOP + PLOT_H * (1 - v / Y_MAX);
+}
+
+const n = sprints.length;
+const slotW = n > 0 ? PLOT_W / n : 0;
+// Within each sprint slot: [outer-gap][bar A][inner-gap][bar B][outer-gap]
+// 0.15 + 0.30 + 0.10 + 0.30 + 0.15 = 1.00
+const barW    = slotW * 0.30;
+const gapOuter = slotW * 0.15;
+const gapInner = slotW * 0.10;
+
+function xA(i: number): number { return PAD_LEFT + slotW * i + gapOuter; }
+function xB(i: number): number { return xA(i) + barW + gapInner; }
+function xSlotCenter(i: number): number { return PAD_LEFT + slotW * (i + 0.5); }
+
+// ── Y-axis ticks ──────────────────────────────────────────────────────────
+const Y_TICK_COUNT = 4;
+const yTicks = Array.from({ length: Y_TICK_COUNT }, (_, i) => {
+  const v = (Y_MAX / (Y_TICK_COUNT - 1)) * i;
+  return { v, svgY: yV(v) };
+});
+
+function fmt(v: number): string {
+  if (unitSuffix === 'k') {
+    if (v >= 1000) return `${(v / 1000).toFixed(1)}M`;
+    return `${Math.round(v)}k`;
+  }
+  // unitSuffix === 'min'
+  return `${Math.round(v)}m`;
+}
+
+// ── Bar segment geometry ──────────────────────────────────────────────────
+const bars = sprints.map((s, i) => {
+  const aX = xA(i);
+  const bX = xB(i);
+
+  // Column A (plan) — must bottom, overhead top
+  const aMustTopY = yV(s.a.mustK);
+  const aMustH    = yV(0) - aMustTopY;
+  const aOhTopY   = yV(s.a.mustK + s.a.overheadK);
+  const aOhH      = aMustTopY - aOhTopY;
+
+  // Column B (actual) — must bottom, overhead top
+  const bMustTopY = yV(s.b.mustK);
+  const bMustH    = yV(0) - bMustTopY;
+  const bOhTopY   = yV(s.b.mustK + s.b.overheadK);
+  const bOhH      = bMustTopY - bOhTopY;
+
+  return {
+    sprint_id: s.sprint_id,
+    aX, bX,
+    aMustTopY, aMustH, aOhTopY, aOhH,
+    bMustTopY, bMustH, bOhTopY, bOhH,
+    aTotal: s.aTotal,
+    bTotal: s.bTotal,
+    aMustK: s.a.mustK,
+    aOhK: s.a.overheadK,
+    bMustK: s.b.mustK,
+    bOhK: s.b.overheadK,
+    ratio: s.ratio,
+    isOverrun: s.isOverrun,
+    slotCenterX: xSlotCenter(i),
+  };
+});
+
+const xTickLabelY = VB_H - 30;
+const xSubLabelY  = VB_H - 16;
+const yTickLabelX = PAD_LEFT - 4;
+---
+
+<section
+  class="stacked-comparison"
+  aria-label={ariaLabel}
+>
+  <header class="head">
+    <h2 class="title">
+      <span class="glyph" aria-hidden="true">◆</span> {title}
+    </h2>
+    {hasSprints && (
+      <div class="head-meta">
+        <span class="count">{n}</span>
+        <span class="sep">closed sprint{n === 1 ? '' : 's'}</span>
+        <span class="sep">·</span>
+        <span class="axis-meta">{axisLabel}</span>
+        <span class="sep">·</span>
+        <span class="threshold">overrun {varianceFlagThreshold}×</span>
+      </div>
+    )}
+  </header>
+
+  <div class="chart-outer">
+    <div class="chart-wrap">
+      <svg
+        class="chart-svg"
+        viewBox={`0 0 ${VB_W} ${VB_H}`}
+        preserveAspectRatio="xMidYMid meet"
+        role="img"
+        aria-label={ariaLabel}
+      >
+        {hasSprints ? (
+          <>
+            {yTicks.map(t => (
+              <line
+                class="grid-line"
+                x1={PAD_LEFT} x2={VB_W - PAD_RIGHT}
+                y1={t.svgY}   y2={t.svgY}
+              />
+            ))}
+
+            {bars.map(b => (
+              <g class="bar-group">
+                {/* Column A (plan) — must (bottom) + overhead (top) */}
+                {b.aMustH > 0 && (
+                  <rect
+                    class="seg-plan-must"
+                    x={b.aX} y={b.aMustTopY}
+                    width={barW} height={b.aMustH}
+                  >
+                    <title>{b.sprint_id} plan · must {fmt(b.aMustK)}</title>
+                  </rect>
+                )}
+                {b.aOhH > 0 && (
+                  <rect
+                    class="seg-plan-overhead"
+                    x={b.aX} y={b.aOhTopY}
+                    width={barW} height={b.aOhH}
+                  >
+                    <title>{b.sprint_id} plan · overhead {fmt(b.aOhK)} (plan total {fmt(b.aTotal)})</title>
+                  </rect>
+                )}
+
+                {/* Column B (actual) — must (bottom) + overhead (top) */}
+                {b.bMustH > 0 && (
+                  <rect
+                    class="seg-actual-must"
+                    x={b.bX} y={b.bMustTopY}
+                    width={barW} height={b.bMustH}
+                  >
+                    <title>{b.sprint_id} actual · must {fmt(b.bMustK)}</title>
+                  </rect>
+                )}
+                {b.bOhH > 0 && (
+                  <rect
+                    class="seg-actual-overhead"
+                    x={b.bX} y={b.bOhTopY}
+                    width={barW} height={b.bOhH}
+                  >
+                    <title>{b.sprint_id} actual · overhead {fmt(b.bOhK)} (actual total {fmt(b.bTotal)} · {b.ratio.toFixed(2)}× plan)</title>
+                  </rect>
+                )}
+
+                {/* Overrun glyph (column B top, --danger) */}
+                {b.isOverrun && (
+                  <text
+                    class="overrun-glyph"
+                    x={b.bX + barW / 2}
+                    y={b.bOhTopY - 4}
+                    text-anchor="middle"
+                  >
+                    ↑
+                    <title>{b.sprint_id} overrun · actual {fmt(b.bTotal)} = {b.ratio.toFixed(2)}× plan {fmt(b.aTotal)} (threshold {varianceFlagThreshold}×)</title>
+                  </text>
+                )}
+
+                {/* Per-column sub-labels (plan / actual) */}
+                <text
+                  class="col-sublabel"
+                  x={b.aX + barW / 2} y={xSubLabelY}
+                  text-anchor="middle"
+                >{columnALabel}</text>
+                <text
+                  class="col-sublabel"
+                  x={b.bX + barW / 2} y={xSubLabelY}
+                  text-anchor="middle"
+                >{columnBLabel}</text>
+              </g>
+            ))}
+
+            {/* Y-axis tick labels */}
+            {yTicks.map(t => (
+              <text
+                class="ytick-text"
+                x={yTickLabelX} y={t.svgY + 3}
+                text-anchor="end"
+              >{fmt(t.v)}</text>
+            ))}
+
+            {/* X-axis sprint id labels */}
+            {bars.map(b => (
+              <text
+                class="xtick-text"
+                x={b.slotCenterX} y={xTickLabelY}
+                text-anchor="middle"
+              >{b.sprint_id.replace(/^SPR-?/, '')}</text>
+            ))}
+          </>
+        ) : (
+          <text
+            class="empty-text"
+            x={VB_W / 2} y={VB_H / 2}
+            text-anchor="middle"
+            dominant-baseline="middle"
+          >No closed sprints yet</text>
+        )}
+      </svg>
+    </div>
+  </div>
+
+  {hasSprints && (
+    <div class="legend" aria-hidden="true">
+      <span class="legend-item">
+        <span class="legend-swatch legend-plan-must"></span>
+        plan · must
+      </span>
+      <span class="legend-item">
+        <span class="legend-swatch legend-plan-overhead"></span>
+        plan · overhead
+      </span>
+      <span class="legend-item">
+        <span class="legend-swatch legend-actual-must"></span>
+        actual · must
+      </span>
+      <span class="legend-item">
+        <span class="legend-swatch legend-actual-overhead"></span>
+        actual · overhead
+      </span>
+      <span class="legend-item">
+        <span class="legend-glyph" aria-hidden="true">↑</span>
+        overrun (&gt; {varianceFlagThreshold}× plan)
+      </span>
+    </div>
+  )}
+
+  {footerText && (
+    <p class="chart-footer">{footerText}</p>
+  )}
+</section>
+
+<style>
+  .stacked-comparison {
+    position: relative;
+    border: 1px solid var(--border);
+    background: var(--bg-panel);
+    padding: var(--space-5);
+  }
+
+  .head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-4);
+    margin-bottom: var(--space-4);
+    flex-wrap: wrap;
+  }
+
+  .title {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: var(--size-sm);
+    color: var(--fg-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    white-space: nowrap;
+  }
+  .title .glyph {
+    color: var(--accent);
+    font-size: 0.65em;
+  }
+
+  .head-meta {
+    font-size: var(--size-sm);
+    color: var(--fg-dim);
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+  }
+  .count       { color: var(--accent); font-weight: 600; }
+  .axis-meta   { color: var(--fg); }
+  .threshold   { color: var(--fg-dim); }
+  .sep         { color: var(--muted); margin: 0 var(--space-2); }
+
+  .chart-outer { display: flex; align-items: stretch; }
+
+  .chart-wrap {
+    position: relative;
+    flex: 1 1 0;
+    min-width: 0;
+    height: 220px;
+  }
+
+  .chart-svg { display: block; width: 100%; height: 100%; }
+
+  .grid-line {
+    stroke: var(--border);
+    stroke-width: 0.5;
+    stroke-dasharray: 1 3;
+  }
+
+  /* Column A (plan) — dimmed/muted family */
+  .seg-plan-must {
+    fill: var(--accent-dim);
+    @media (prefers-reduced-motion: no-preference) {
+      transition: opacity var(--motion-fast) var(--easing);
+    }
+  }
+  .seg-plan-must:hover { opacity: 0.8; }
+
+  .seg-plan-overhead {
+    fill: var(--muted);
+    @media (prefers-reduced-motion: no-preference) {
+      transition: opacity var(--motion-fast) var(--easing);
+    }
+  }
+  .seg-plan-overhead:hover { opacity: 0.8; }
+
+  /* Column B (actual) — accent/accent-dim family */
+  .seg-actual-must {
+    fill: var(--accent);
+    @media (prefers-reduced-motion: no-preference) {
+      transition: opacity var(--motion-fast) var(--easing);
+    }
+  }
+  .seg-actual-must:hover { opacity: 0.8; }
+
+  .seg-actual-overhead {
+    fill: var(--accent-dim);
+    @media (prefers-reduced-motion: no-preference) {
+      transition: opacity var(--motion-fast) var(--easing);
+    }
+  }
+  .seg-actual-overhead:hover { opacity: 0.8; }
+
+  .overrun-glyph {
+    fill: var(--danger);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  .empty-text {
+    fill: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .ytick-text, .xtick-text {
+    fill: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 9px;
+    letter-spacing: 0.04em;
+  }
+
+  .col-sublabel {
+    fill: var(--fg-dim);
+    font-family: var(--font-mono);
+    font-size: 7px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3) var(--space-5);
+    margin-top: var(--space-4);
+    font-size: 10px;
+    color: var(--fg-dim);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  .legend-swatch {
+    display: inline-block;
+    width: 14px;
+    height: 8px;
+    flex-shrink: 0;
+  }
+  .legend-plan-must     { background: var(--accent-dim); }
+  .legend-plan-overhead { background: var(--muted); }
+  .legend-actual-must     { background: var(--accent); }
+  .legend-actual-overhead { background: var(--accent-dim); }
+  .legend-glyph {
+    color: var(--danger);
+    font-weight: 700;
+    font-size: 12px;
+    line-height: 1;
+  }
+
+  .chart-footer {
+    font-family: var(--font-mono);
+    font-size: var(--size-sm);
+    color: var(--fg-dim);
+    margin: var(--space-3) 0 0;
+    letter-spacing: 0.02em;
+    font-style: italic;
+  }
+
+  @media (max-width: 640px) {
+    .title { font-size: 10px; }
+    .chart-wrap { height: 200px; }
+    .head { gap: var(--space-2); }
+    .head-meta { font-size: 9px; white-space: normal; }
+    .legend { gap: var(--space-2) var(--space-3); font-size: 9px; }
+    .chart-footer { font-size: 10px; }
+  }
+</style>

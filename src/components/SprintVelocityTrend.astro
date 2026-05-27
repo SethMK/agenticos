@@ -1,0 +1,475 @@
+---
+/**
+ * SprintVelocityTrend.astro — S096
+ *
+ * Velocity trend: one stacked bar per closed sprint, plotted in order.
+ *   - bottom segment = actual_work_tokens_k (--accent)
+ *   - top    segment = actual_overhead_tokens_k (--accent-dim)
+ *   - bar height = actual_total_tokens_k
+ *
+ * Overhead reference line: approach (b) — single horizontal line at the
+ *   running median of actual_overhead_tokens_k across all closed_sprints,
+ *   labelled "median overhead = Xk". Picked over approach (a) because the
+ *   v2 formula `80 + 50 × must_count` requires a `must_count` field that
+ *   closed_sprints[] does not carry; using `length(must_have_shipped_ids)`
+ *   as a proxy would understate must_count (shipped ≠ planned). A single
+ *   running median is honest and makes the v1-100k vs actual gap visible
+ *   without proxying a field that doesn't ship.
+ *
+ * Outlier rule: actual_total_tokens_k > 2 × planned_total_budget_k gets a
+ *   ↑ glyph in --danger above the bar. planned_total computed in-component
+ *   from planned_work_budget_k + planned_overhead_budget_k (closed_sprints[]
+ *   carries the parts, not the sum).
+ *
+ * Constraints (cross-window risk hardening):
+ *   - Reads real data/snapshots/public.json — no mock files.
+ *   - Hand-rolled SVG, zero client JS.
+ *   - Design tokens only inside chart elements (no hex).
+ *   - Mobile-responsive at 390px (bars scale; legend wraps).
+ *   - Fail-soft empty state when closed_sprints[] is empty.
+ */
+import snapshot from '../../data/snapshots/public.json';
+
+interface ClosedSprint {
+  sprint_id: string;
+  actual_work_tokens_k: number;
+  actual_overhead_tokens_k: number;
+  actual_total_tokens_k: number;
+  planned_work_budget_k: number;
+  planned_overhead_budget_k: number;
+  must_have_shipped_ids: string[];
+}
+
+const pmo = (snapshot as Record<string, unknown>).pmo as {
+  closed_sprints?: ClosedSprint[];
+} | undefined;
+
+const closed_sprints: ClosedSprint[] = pmo?.closed_sprints ?? [];
+const hasSprints = closed_sprints.length > 0;
+
+// ── Median overhead (approach b) ──────────────────────────────────────────
+function median(values: number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0
+    ? (sorted[mid - 1] + sorted[mid]) / 2
+    : sorted[mid];
+}
+
+const overheadValues = closed_sprints.map(s => s.actual_overhead_tokens_k);
+const medianOverheadK = median(overheadValues);
+
+// ── Outlier flag (actual_total > 2 × planned_total) ───────────────────────
+const sprints = closed_sprints.map(s => {
+  const planned_total_budget_k = s.planned_work_budget_k + s.planned_overhead_budget_k;
+  const ratio = planned_total_budget_k > 0 ? s.actual_total_tokens_k / planned_total_budget_k : 0;
+  const isOutlier = ratio > 2;
+  return { ...s, planned_total_budget_k, ratio, isOutlier };
+});
+
+// ── Y-axis range ──────────────────────────────────────────────────────────
+const rawMaxK = sprints.reduce((m, s) => Math.max(m, s.actual_total_tokens_k), 0);
+const Y_MAX_K = rawMaxK > 0 ? rawMaxK * 1.15 : 400;
+
+// ── SVG geometry ──────────────────────────────────────────────────────────
+const VB_W = 600;
+const VB_H = 200;
+const PAD_TOP    = 20;
+const PAD_BOTTOM = 32;
+const PAD_LEFT   = 8;
+const PAD_RIGHT  = 8;
+
+const PLOT_W = VB_W - PAD_LEFT - PAD_RIGHT;
+const PLOT_H = VB_H - PAD_TOP - PAD_BOTTOM;
+
+function yK(k: number): number {
+  return PAD_TOP + PLOT_H * (1 - k / Y_MAX_K);
+}
+
+// Bar geometry: even slots across PLOT_W, bar width = 60% of slot.
+const n = sprints.length;
+const slotW = n > 0 ? PLOT_W / n : 0;
+const barW = slotW * 0.6;
+
+function xBar(i: number): number {
+  return PAD_LEFT + slotW * i + (slotW - barW) / 2;
+}
+
+function xCenter(i: number): number {
+  return PAD_LEFT + slotW * (i + 0.5);
+}
+
+// ── Y-axis ticks (4 evenly-spaced) ─────────────────────────────────────────
+const Y_TICK_COUNT = 4;
+const yTicks = Array.from({ length: Y_TICK_COUNT }, (_, i) => {
+  const k = (Y_MAX_K / (Y_TICK_COUNT - 1)) * i;
+  return { k, svgY: yK(k) };
+});
+
+function fmtK(k: number): string {
+  if (k >= 1000) return `${(k / 1000).toFixed(1)}M`;
+  return `${Math.round(k)}k`;
+}
+
+// ── Bar segments ──────────────────────────────────────────────────────────
+const bars = sprints.map((s, i) => {
+  const x = xBar(i);
+  const workTopY = yK(s.actual_work_tokens_k);
+  const workH = yK(0) - workTopY;
+  const totalTopY = yK(s.actual_total_tokens_k);
+  const overheadH = workTopY - totalTopY;
+  return {
+    sprint_id: s.sprint_id,
+    x,
+    workY: workTopY,
+    workH,
+    overheadY: totalTopY,
+    overheadH,
+    totalTopY,
+    actual_total: s.actual_total_tokens_k,
+    actual_work: s.actual_work_tokens_k,
+    actual_overhead: s.actual_overhead_tokens_k,
+    planned_total: s.planned_total_budget_k,
+    ratio: s.ratio,
+    isOutlier: s.isOutlier,
+    centerX: xCenter(i),
+  };
+});
+
+// ── Median reference line ─────────────────────────────────────────────────
+const medianY = yK(medianOverheadK);
+
+// Axis tick labels render as in-SVG <text> elements so they share the SVG
+// coordinate system with the bars (HTML overlays positioned in % of the
+// chart-wrap container miss the mark when preserveAspectRatio=meet leaves
+// horizontal letterbox space — see s096-desktop.png debugging).
+const xTickLabelY = VB_H - 10;
+const yTickLabelX = PAD_LEFT + 2;
+---
+
+<section
+  class="velocity-trend"
+  aria-label={hasSprints
+    ? `Sprint velocity trend across ${n} closed sprints. Median overhead ${fmtK(medianOverheadK)}.`
+    : 'Sprint velocity trend (no closed sprints yet)'}
+>
+  <header class="head">
+    <h2 class="title">
+      <span class="glyph" aria-hidden="true">◆</span> VELOCITY TREND
+    </h2>
+    {hasSprints && (
+      <div class="head-meta">
+        <span class="count">{n}</span>
+        <span class="sep">closed sprint{n === 1 ? '' : 's'}</span>
+        <span class="sep">·</span>
+        <span class="median-label">median overhead</span>
+        <span class="median-val">{fmtK(medianOverheadK)}</span>
+      </div>
+    )}
+  </header>
+
+  <div class="chart-outer">
+    <div class="chart-wrap">
+      <svg
+        class="chart-svg"
+        viewBox={`0 0 ${VB_W} ${VB_H}`}
+        preserveAspectRatio="xMidYMid meet"
+        role="img"
+        aria-label={hasSprints
+          ? `Stacked-bar velocity trend across ${n} closed sprints. Median overhead ${fmtK(medianOverheadK)}.`
+          : 'Velocity trend, no closed sprints yet.'}
+      >
+        {hasSprints ? (
+          <>
+            {/* Gridlines */}
+            {yTicks.map(t => (
+              <line
+                class="grid-line"
+                x1={PAD_LEFT} x2={VB_W - PAD_RIGHT}
+                y1={t.svgY}   y2={t.svgY}
+              />
+            ))}
+
+            {/* Stacked bars */}
+            {bars.map(b => (
+              <g class="bar-group">
+                {/* Work segment (bottom) */}
+                <rect
+                  class="seg-work"
+                  x={b.x}
+                  y={b.workY}
+                  width={barW}
+                  height={b.workH}
+                >
+                  <title>{b.sprint_id} — work {fmtK(b.actual_work)}</title>
+                </rect>
+                {/* Overhead segment (top) */}
+                {b.overheadH > 0 && (
+                  <rect
+                    class="seg-overhead"
+                    x={b.x}
+                    y={b.overheadY}
+                    width={barW}
+                    height={b.overheadH}
+                  >
+                    <title>{b.sprint_id} — overhead {fmtK(b.actual_overhead)} / total {fmtK(b.actual_total)} vs planned {fmtK(b.planned_total)} (ratio {b.ratio.toFixed(2)}×)</title>
+                  </rect>
+                )}
+                {/* Outlier ↑ glyph */}
+                {b.isOutlier && (
+                  <text
+                    class="outlier-glyph"
+                    x={b.centerX}
+                    y={b.totalTopY - 4}
+                    text-anchor="middle"
+                  >
+                    ↑
+                    <title>{b.sprint_id} outlier — actual {fmtK(b.actual_total)} = {b.ratio.toFixed(2)}× planned {fmtK(b.planned_total)}</title>
+                  </text>
+                )}
+              </g>
+            ))}
+
+            {/* approach: (b) running-median actual_overhead_tokens_k line — single horizontal
+                reference at median(actual_overhead_tokens_k), labelled "median overhead = Xk".
+                Visible above the overhead segments since it sits at the median overhead k-value
+                on the y-axis (not behind the bars). */}
+            <line
+              class="median-line"
+              x1={PAD_LEFT} x2={VB_W - PAD_RIGHT}
+              y1={medianY}  y2={medianY}
+              stroke-dasharray="6 4"
+            >
+              <title>plan-vs-actual overhead reference · median overhead = {fmtK(medianOverheadK)}</title>
+            </line>
+
+            {/* Y-axis tick labels (in-SVG text — scales + aligns with bars) */}
+            {yTicks.map(t => (
+              <text
+                class="ytick-text"
+                x={yTickLabelX}
+                y={t.svgY - 2}
+                text-anchor="start"
+              >
+                {fmtK(t.k)}
+              </text>
+            ))}
+
+            {/* X-axis tick labels: sprint number, aligned with bar center */}
+            {bars.map(b => (
+              <text
+                class="xtick-text"
+                x={b.centerX}
+                y={xTickLabelY}
+                text-anchor="middle"
+              >
+                {b.sprint_id.replace(/^SPR-?/, '')}
+              </text>
+            ))}
+          </>
+        ) : (
+          <text
+            class="empty-text"
+            x={VB_W / 2}
+            y={VB_H / 2}
+            text-anchor="middle"
+            dominant-baseline="middle"
+          >
+            No closed sprints yet
+          </text>
+        )}
+      </svg>
+
+    </div>
+  </div>
+
+  {hasSprints && (
+    <div class="legend" aria-hidden="true">
+      <span class="legend-item">
+        <span class="legend-swatch legend-work"></span>
+        work
+      </span>
+      <span class="legend-item">
+        <span class="legend-swatch legend-overhead"></span>
+        overhead
+      </span>
+      <span class="legend-item">
+        <span class="legend-swatch legend-median"></span>
+        plan-vs-actual overhead (median {fmtK(medianOverheadK)})
+      </span>
+      <span class="legend-item">
+        <span class="legend-glyph" aria-hidden="true">↑</span>
+        outlier (&gt; 2× planned)
+      </span>
+    </div>
+  )}
+
+  <p class="chart-caption">
+    {hasSprints
+      ? `${n} closed sprint${n === 1 ? '' : 's'} · velocity trend (work + overhead, stacked) · median overhead ${fmtK(medianOverheadK)}`
+      : 'velocity trend across closed sprints · awaiting first sprint close'}
+  </p>
+</section>
+
+<style>
+  .velocity-trend {
+    position: relative;
+    border: 1px solid var(--border);
+    background: var(--bg-panel);
+    padding: var(--space-5);
+  }
+
+  .head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-4);
+    margin-bottom: var(--space-4);
+    flex-wrap: wrap;
+  }
+
+  .title {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: var(--size-sm);
+    color: var(--fg-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    white-space: nowrap;
+  }
+  .title .glyph {
+    color: var(--accent);
+    font-size: 0.65em;
+  }
+
+  .head-meta {
+    font-size: var(--size-sm);
+    color: var(--fg-dim);
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+  }
+  .count        { color: var(--accent); font-weight: 600; }
+  .median-label { color: var(--fg-dim); }
+  .median-val   { color: var(--fg); font-weight: 600; }
+  .sep          { color: var(--muted); margin: 0 var(--space-2); }
+
+  .chart-outer { display: flex; align-items: stretch; }
+
+  .chart-wrap {
+    position: relative;
+    flex: 1 1 0;
+    min-width: 0;
+    height: 200px;
+  }
+
+  .chart-svg { display: block; width: 100%; height: 100%; }
+
+  .grid-line {
+    stroke: var(--border);
+    stroke-width: 0.5;
+    stroke-dasharray: 1 3;
+  }
+
+  .seg-work {
+    fill: var(--accent);
+    @media (prefers-reduced-motion: no-preference) {
+      transition: opacity var(--motion-fast) var(--easing);
+    }
+  }
+  .seg-work:hover { opacity: 0.8; }
+
+  .seg-overhead {
+    fill: var(--accent-dim);
+    @media (prefers-reduced-motion: no-preference) {
+      transition: opacity var(--motion-fast) var(--easing);
+    }
+  }
+  .seg-overhead:hover { opacity: 0.8; }
+
+  .median-line {
+    stroke: var(--fg-dim);
+    stroke-width: 1.5;
+    fill: none;
+  }
+
+  .outlier-glyph {
+    fill: var(--danger);
+    font-family: var(--font-mono);
+    font-size: 14px;
+    font-weight: 700;
+  }
+
+  .empty-text {
+    fill: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .ytick-text, .xtick-text {
+    fill: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 9px;
+    letter-spacing: 0.04em;
+  }
+
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3) var(--space-5);
+    margin-top: var(--space-4);
+    font-size: 10px;
+    color: var(--fg-dim);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  .legend-swatch {
+    display: inline-block;
+    width: 14px;
+    height: 8px;
+    flex-shrink: 0;
+  }
+  .legend-work     { background: var(--accent); }
+  .legend-overhead { background: var(--accent-dim); }
+  .legend-median {
+    background: transparent;
+    border-bottom: 2px dashed var(--fg-dim);
+    height: 0;
+    margin-bottom: 3px;
+  }
+  .legend-glyph {
+    color: var(--danger);
+    font-weight: 700;
+    font-size: 12px;
+    line-height: 1;
+  }
+
+  .chart-caption {
+    font-family: var(--font-mono);
+    font-size: var(--size-sm);
+    color: var(--fg-dim);
+    margin: var(--space-3) 0 0;
+    letter-spacing: 0.02em;
+  }
+
+  @media (max-width: 640px) {
+    .title { font-size: 10px; }
+    .chart-wrap { height: 170px; }
+    .head { gap: var(--space-2); }
+    .head-meta { font-size: 10px; }
+    .legend { gap: var(--space-2) var(--space-3); font-size: 9px; }
+    .chart-caption { font-size: 10px; }
+    .xtick { font-size: 8px; }
+  }
+</style>

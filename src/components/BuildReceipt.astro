@@ -69,8 +69,8 @@ const total = columns.backlog + columns.ready + columns.in_progress + columns.re
   <section class="receipt-section">
     <h2 class="side-heading"><span class="glyph" aria-hidden="true">◆</span> typical story</h2>
     <ul class="stats-list">
-      <li><span class="k">tokens</span><span class="v small">~50k</span></li>
-      <li><span class="k">wall-clock</span><span class="v small">~20m</span></li>
+      <li><span class="k">tokens</span><span class="v small">~105k</span></li>
+      <li><span class="k">wall-clock</span><span class="v small">~6m</span></li>
       <li><span class="k">agents</span><span class="v small">impl + qa</span></li>
       <li><span class="k">model</span><span class="v small">sonnet</span></li>
       <li><span class="k">size cap</span><span class="v small">≤ 3 pts</span></li>
@@ -81,25 +81,27 @@ const total = columns.backlog + columns.ready + columns.in_progress + columns.re
   <section class="receipt-section">
     <h2 class="side-heading"><span class="glyph" aria-hidden="true">◆</span> the loop</h2>
     <div class="loop-box">
-      <pre aria-label="Agent loop diagram: orchestrator pulls a card, dispatches implementer, then qa-verifier, then loops back to pull the next card"><b>orchestrator</b>
+      <pre aria-label="Agent loop diagram: orchestrator pulls a card, routes via gate:design to ux-reviewer Spec-Gate, default path through implementer and qa-verifier, or S-inline direct orchestrator edit, then loops back"><b>orchestrator</b>
      │ pulls one card
      ▼
-┌─ <i>READY</i> ───────┐
-│                │
-│  <b>implementer</b>  │ writes code
-│       │        │
-│       ▼        │
-│  <b>qa-verifier</b>  │ checks AC
-│       │        │
-│       ▼        │
-└─ <i>DONE</i> ────────┘
+┌─ <i>READY</i> ──────────┐
+│                   │
+│  gate:design? ──▶ <b>ux-reviewer</b>
+│                   Spec-Gate pre-pull
+│
+│  default ───────▶ <b>implementer</b>
+│                        │
+│                        ▼
+│                   <b>qa-verifier</b>
+│
+│  S-inline ──────▶ <b>orchestrator</b>
+│                   edits inline
+│                   │
+└─ <i>DONE</i> ◀──────────┘
      │
      ▼
-<b>orchestrator</b>
-     │ pulls next
-     ▼
-     ...</pre>
-      <p class="caption">two agents per story · sequential · WIP determined per-pull by file-overlap.</p>
+   pulls next ...</pre>
+      <p class="caption">1–2 agents per story · Spec-Gate when gate:design · WIP per-pull by file-overlap.</p>
     </div>
   </section>
 

@@ -1,0 +1,92 @@
+---
+/**
+ * SprintAccuracyTime.astro — S095
+ *
+ * Per-sprint accuracy (time): plan-vs-actual stacked bars in wall-clock
+ * minutes. Second consumer of the StackedBarSprintComparison base shipped
+ * by S094.
+ *
+ *   - Column A (plan)   = planned-must-min + planned-overhead-min,
+ *     split proportionally from planned_duration_min by token ratio.
+ *   - Column B (actual) = actual-must-min  + actual-overhead-min,
+ *     split proportionally from actual_wall_clock_min by token ratio.
+ *
+ * Strategy (b) proportional approximation (Spec-Gate 2026-05-26):
+ *   per-must/overhead time split is NOT recorded in the sprint schema;
+ *   we approximate it from the must/overhead token split. Coarse but
+ *   honest — disclosed in the chart footer.
+ *
+ *   actual_must_min ≈ actual_wall_clock_min × actual_must_have_tokens_k
+ *                                            / actual_work_tokens_k
+ *   actual_overhead_min = actual_wall_clock_min − actual_must_min
+ *
+ *   For the plan column we apply the same proportional rule using the
+ *   planned must/overhead budget ratio:
+ *   plan_must_min     = planned_duration_min × planned_must_have_budget_k
+ *                                              / planned_work_budget_k
+ *   plan_overhead_min = planned_duration_min − plan_must_min
+ *
+ *   ⚠ schema invariant: planned_work_budget_k = planned_must_have_budget_k
+ *     (overhead lives in its own field); this collapses plan-time to a
+ *     single must segment in practice. Acceptable v1 — strategy (a)
+ *     schema extension is deferred per Spec-Gate.
+ *
+ * Variance flag: actual_wall_clock_min > planned_duration_min × 1.5
+ *   → ↑ in --danger. Current snapshot: 0 flags (max actual 41m < 91m).
+ */
+import StackedBarSprintComparison from './StackedBarSprintComparison.astro';
+import snapshot from '../../data/snapshots/public.json';
+
+interface ClosedSprintRaw {
+  sprint_id: string;
+  planned_must_have_budget_k: number;
+  planned_overhead_budget_k: number;
+  planned_work_budget_k: number;
+  actual_must_have_tokens_k: number;
+  actual_overhead_tokens_k: number;
+  actual_work_tokens_k: number;
+  actual_total_tokens_k: number;
+  planned_duration_min: number;
+  actual_wall_clock_min: number;
+  must_have_shipped_ids?: string[];
+}
+
+const pmo = (snapshot as Record<string, unknown>).pmo as {
+  closed_sprints?: ClosedSprintRaw[];
+} | undefined;
+
+const closed_sprints = pmo?.closed_sprints ?? [];
+
+const VARIANCE_THRESHOLD = 1.5;
+---
+
+<StackedBarSprintComparison
+  data={closed_sprints}
+  columnAExtractor={(s) => {
+    const workK = s.planned_work_budget_k > 0 ? s.planned_work_budget_k : s.planned_must_have_budget_k;
+    const mustMin = workK > 0
+      ? s.planned_duration_min * (s.planned_must_have_budget_k / workK)
+      : 0;
+    return {
+      mustK: mustMin,
+      overheadK: Math.max(0, s.planned_duration_min - mustMin),
+    };
+  }}
+  columnBExtractor={(s) => {
+    const mustMin = s.actual_work_tokens_k > 0
+      ? s.actual_wall_clock_min * (s.actual_must_have_tokens_k / s.actual_work_tokens_k)
+      : 0;
+    return {
+      mustK: mustMin,
+      overheadK: Math.max(0, s.actual_wall_clock_min - mustMin),
+    };
+  }}
+  columnALabel="plan"
+  columnBLabel="actual"
+  axisLabel="wall-clock min"
+  unitSuffix="min"
+  varianceFlagThreshold={VARIANCE_THRESHOLD}
+  title="ACCURACY (TIME)"
+  footerText="time split estimated proportionally from token split (sprint schema does not record per-must time directly)"
+  ariaLabel={`Sprint accuracy (time) across ${closed_sprints.length} closed sprints. Plan-and-actual stacked bars in wall-clock minutes, overrun threshold ${VARIANCE_THRESHOLD}x.`}
+/>

@@ -1,0 +1,617 @@
+---
+/**
+ * SprintBurnup.astro — S088 (base) + S097 (historical sprint switcher)
+ *
+ * Sprint burn-up chart for /how-it-was-built. S088 shipped server-render-only
+ * for the active sprint; S097 extends it with a native <select> sprint switcher
+ * that lets recruiters/Marcin browse any sprint with execution points
+ * (SPR-002..current). Default selection = current_sprint if non-null, else the
+ * most-recent closed sprint.
+ *
+ * Interactivity (S097 acceptance bullet 7): option (c) — vanilla onchange
+ * inline handler. Each sprint pre-renders as a hidden chart-view div at build
+ * time; the handler toggles the `hidden` attribute when the selector changes.
+ * Zero framework, zero chart library. Gzip compresses the repeating SVG
+ * structure heavily so 9-10 hidden views stay well under the +5kb cap.
+ *
+ * Visual (per sprint):
+ *   - Work-burn line: execution_points[].running_sum_k (solid, --accent)
+ *   - Overhead-burn line: coarse v1 linear ramp from 0 to budget × 0.5
+ *   - Reference line at planned_work_budget_k (--accent-dim, dashed)
+ *
+ * Constraints (carried from S088):
+ *   - preserveAspectRatio="xMidYMid meet" — never "none" (S069 bug)
+ *   - Server-render path preserved for default sprint (no JS regression
+ *     for first paint, S097 Notes #3)
+ *   - <title> tooltips on data points (S048/S049 contract)
+ *   - Animation wrapped in @media (prefers-reduced-motion: no-preference)
+ *   - Data exclusively from public.json (no hardcoded counts)
+ *   - No hard-coded hex values for chart elements — design tokens only
+ */
+import snapshot from '../../data/snapshots/public.json';
+
+// ── Type model ────────────────────────────────────────────────────────────
+
+interface SprintExecutionPoint {
+  timestamp: string;
+  event: string;
+  running_sum_k: number;
+}
+
+interface SprintRaw {
+  sprint_id?: string;
+  milestone?: string;
+  started_at?: string;
+  planned_work_budget_k?: number;
+  planned_must_have_budget_k?: number;
+  actual_work_tokens_k_running?: number | null;
+  must_have_shipped_ids?: string[];
+  execution_points?: SprintExecutionPoint[];
+}
+
+const pmo = (snapshot as Record<string, unknown>).pmo as {
+  current_sprint?: SprintRaw | null;
+  closed_sprints?: SprintRaw[];
+} | undefined;
+
+const current_sprint = pmo?.current_sprint ?? null;
+const closed_sprints = pmo?.closed_sprints ?? [];
+
+// ── Build sprint option list (S097 acceptance bullet 2 + 4) ───────────────
+// Order: current first (if non-null + has points), then closed in reverse-chrono
+// (most-recent closed at top). Sprints with zero execution_points are filtered.
+interface SprintOption {
+  id: string;
+  label: string;
+  sprint: SprintRaw;
+  isCurrent: boolean;
+}
+
+const sprintOptions: SprintOption[] = [];
+
+if (current_sprint && (current_sprint.execution_points?.length ?? 0) > 0 && current_sprint.sprint_id) {
+  sprintOptions.push({
+    id: current_sprint.sprint_id,
+    label: `Current (${current_sprint.sprint_id})`,
+    sprint: current_sprint,
+    isCurrent: true,
+  });
+}
+
+const closedWithPoints = [...closed_sprints]
+  .filter(s => (s.execution_points?.length ?? 0) > 0 && s.sprint_id)
+  .reverse();
+
+for (const s of closedWithPoints) {
+  sprintOptions.push({
+    id: s.sprint_id!,
+    label: s.sprint_id!,
+    sprint: s,
+    isCurrent: false,
+  });
+}
+
+const hasAnySprint = sprintOptions.length > 0;
+const defaultId = hasAnySprint ? sprintOptions[0].id : '';
+
+// ── Per-sprint chart computation ──────────────────────────────────────────
+
+const VB_W = 600;
+const VB_H = 200;
+const PAD_TOP = 16;
+const PAD_BOTTOM = 32;
+const PAD_LEFT = 8;
+const PAD_RIGHT = 8;
+
+const PLOT_W = VB_W - PAD_LEFT - PAD_RIGHT;
+const PLOT_H = VB_H - PAD_TOP - PAD_BOTTOM;
+
+function fmtK(k: number): string {
+  if (k >= 1000) return `${(k / 1000).toFixed(1)}M`;
+  return `${Math.round(k)}k`;
+}
+
+interface ChartView {
+  id: string;
+  isCurrent: boolean;
+  sprintId: string;
+  milestone: string;
+  startedAt: string;
+  plannedBudgetK: number;
+  pointCount: number;
+  currentWorkK: number;
+  pctOfBudget: string;
+  overheadEndK: number;
+  workPolyline: string;
+  overheadPolyline: string;
+  refLineY: number;
+  workPoints: Array<{ x: number; y: number; timestamp: string; event: string; k: number }>;
+  yTicks: Array<{ k: number; svgY: number }>;
+  xTickOverlays: Array<{ leftPct: number; label: string; isFirst: boolean; isLast: boolean }>;
+  yTickOverlays: Array<{ topPct: number; label: string }>;
+  ariaLabel: string;
+}
+
+function buildView(opt: SprintOption): ChartView {
+  const sprint = opt.sprint;
+  const execution_points = sprint.execution_points ?? [];
+  const plannedBudgetK = sprint.planned_work_budget_k ?? 0;
+  const sprintId = sprint.sprint_id ?? '';
+  const milestone = sprint.milestone ?? '';
+  const startedAt = sprint.started_at ?? '';
+  const pointCount = execution_points.length;
+
+  const OVERHEAD_FRACTION = 0.5;
+  const overheadEndK = plannedBudgetK * OVERHEAD_FRACTION;
+
+  const maxWorkK = execution_points.reduce((m, p) => Math.max(m, p.running_sum_k), 0);
+  const rawMaxK = Math.max(plannedBudgetK, maxWorkK, overheadEndK);
+  const Y_MAX_K = rawMaxK > 0 ? rawMaxK * 1.10 : 400;
+
+  const yK = (k: number) => PAD_TOP + PLOT_H * (1 - k / Y_MAX_K);
+  const xIdx = (i: number, total: number) =>
+    total <= 1 ? PAD_LEFT + PLOT_W / 2 : PAD_LEFT + (i / (total - 1)) * PLOT_W;
+
+  const XLABEL_MAX = 8;
+  const xLabelStep = pointCount > XLABEL_MAX ? Math.ceil(pointCount / XLABEL_MAX) : 1;
+
+  const Y_TICK_COUNT = 4;
+  const yTicks = Array.from({ length: Y_TICK_COUNT }, (_, i) => {
+    const k = (Y_MAX_K / (Y_TICK_COUNT - 1)) * i;
+    return { k, svgY: yK(k) };
+  });
+
+  const workPoints = execution_points.map((pt, i) => ({
+    x: xIdx(i, pointCount),
+    y: yK(pt.running_sum_k),
+    timestamp: pt.timestamp,
+    event: pt.event,
+    k: pt.running_sum_k,
+  }));
+
+  const workPolyline = workPoints.map(p => `${p.x},${p.y}`).join(' ');
+
+  const overheadPoints = execution_points.map((_, i) => ({
+    x: xIdx(i, pointCount),
+    y: yK(overheadEndK * (i / Math.max(pointCount - 1, 1))),
+  }));
+  const overheadPolyline = overheadPoints.map(p => `${p.x},${p.y}`).join(' ');
+
+  const refLineY = yK(plannedBudgetK);
+
+  const currentWorkK = pointCount > 0
+    ? execution_points[pointCount - 1]?.running_sum_k ?? 0
+    : 0;
+  const pctOfBudget = plannedBudgetK > 0
+    ? ((currentWorkK / plannedBudgetK) * 100).toFixed(1)
+    : '0.0';
+
+  const yTickOverlays = yTicks.map(t => ({
+    topPct: (t.svgY / VB_H) * 100,
+    label: fmtK(t.k),
+  }));
+
+  const xTickOverlays = execution_points
+    .map((pt, i) => ({ pt, i }))
+    .filter(({ i }) => i % xLabelStep === 0 || i === pointCount - 1)
+    .map(({ pt, i }) => ({
+      leftPct: (xIdx(i, pointCount) / VB_W) * 100,
+      label: pt.timestamp,
+      isFirst: i === 0,
+      isLast: i === pointCount - 1,
+    }));
+
+  return {
+    id: opt.id,
+    isCurrent: opt.isCurrent,
+    sprintId, milestone, startedAt,
+    plannedBudgetK, pointCount, currentWorkK,
+    pctOfBudget,
+    overheadEndK,
+    workPolyline, overheadPolyline,
+    refLineY,
+    workPoints,
+    yTicks,
+    yTickOverlays, xTickOverlays,
+    ariaLabel: `Sprint ${sprintId} burnup. ${pointCount} execution events. Work burned: ${fmtK(currentWorkK)} of ${fmtK(plannedBudgetK)} budget.`,
+  };
+}
+
+const views: ChartView[] = sprintOptions.map(buildView);
+---
+
+{hasAnySprint ? (
+  <section
+    class="sprint-burnup"
+    data-sprintburnup-root
+    aria-label={`Sprint burnup chart with sprint selector. Default sprint: ${defaultId}.`}
+  >
+    <header class="head">
+      <h2 class="title">
+        <span class="glyph" aria-hidden="true">◆</span> SPRINT BURNUP
+      </h2>
+
+      <div class="select-wrap">
+        <label class="select-label" for="sprint-select-input">sprint</label>
+        <select
+          id="sprint-select-input"
+          class="sprint-select"
+          aria-label="Select sprint"
+          data-sprint-select
+        >
+          {sprintOptions.map(o => (
+            <option value={o.id} selected={o.id === defaultId}>{o.label}</option>
+          ))}
+        </select>
+      </div>
+    </header>
+
+    {views.map(v => (
+      <div
+        class="sprint-view"
+        data-sprint-id={v.id}
+        hidden={v.id !== defaultId}
+      >
+        <div class="head-meta">
+          <span class="sprint-id">{v.sprintId}</span>
+          <span class="sep">·</span>
+          <span class="milestone">{v.milestone}</span>
+          <span class="sep">·</span>
+          <span class="budget-pct">{v.pctOfBudget}%</span>
+          <span class="sep">of</span>
+          <span class="budget-k">{fmtK(v.plannedBudgetK)}</span>
+          {v.isCurrent && <span class="badge-current">current</span>}
+        </div>
+
+        <div class="chart-outer">
+          <div class="chart-wrap">
+            <svg
+              class="chart-svg"
+              viewBox={`0 0 ${VB_W} ${VB_H}`}
+              preserveAspectRatio="xMidYMid meet"
+              role="img"
+              aria-label={v.ariaLabel}
+            >
+              {v.yTicks.map(t => (
+                <line
+                  class="grid-line"
+                  x1={PAD_LEFT} x2={VB_W - PAD_RIGHT}
+                  y1={t.svgY}   y2={t.svgY}
+                />
+              ))}
+
+              <line
+                class="ref-line"
+                x1={PAD_LEFT} x2={VB_W - PAD_RIGHT}
+                y1={v.refLineY} y2={v.refLineY}
+                stroke-dasharray="6 4"
+              >
+                <title>Planned work budget: {fmtK(v.plannedBudgetK)}</title>
+              </line>
+
+              {v.pointCount > 0 && (
+                <polyline
+                  class="overhead-line"
+                  points={v.overheadPolyline}
+                  fill="none"
+                >
+                  <title>Overhead burn (v1 approx: linear ramp to {fmtK(v.overheadEndK)})</title>
+                </polyline>
+              )}
+
+              {v.pointCount > 0 && (
+                <polyline
+                  class="work-line"
+                  points={v.workPolyline}
+                  fill="none"
+                >
+                  <title>Work burn: {fmtK(v.currentWorkK)} of {fmtK(v.plannedBudgetK)}</title>
+                </polyline>
+              )}
+
+              {v.workPoints.map(p => (
+                <circle class="work-dot" cx={p.x} cy={p.y} r="4">
+                  <title>{p.timestamp} — {p.event}\nWork: {fmtK(p.k)}</title>
+                </circle>
+              ))}
+            </svg>
+
+            {v.yTickOverlays.map(t => (
+              <span class="ytick" style={`top: ${t.topPct.toFixed(2)}%`}>{t.label}</span>
+            ))}
+
+            {v.xTickOverlays.map(t => (
+              <span
+                class={`xtick${t.isFirst ? ' xtick-first' : ''}${t.isLast && !t.isFirst ? ' xtick-last' : ''}`}
+                style={`left: ${t.leftPct.toFixed(2)}%`}
+              >
+                {t.label}
+              </span>
+            ))}
+          </div>
+        </div>
+
+        <div class="legend" aria-hidden="true">
+          <span class="legend-item">
+            <span class="legend-swatch legend-work"></span>
+            work burn
+          </span>
+          <span class="legend-item">
+            <span class="legend-swatch legend-overhead"></span>
+            overhead (v1 approx)
+          </span>
+          <span class="legend-item">
+            <span class="legend-swatch legend-ref"></span>
+            planned budget ({fmtK(v.plannedBudgetK)})
+          </span>
+        </div>
+
+        <p class="chart-caption">
+          {v.sprintId} · {v.milestone} · started {v.startedAt.slice(0, 10)} · {v.pointCount} event{v.pointCount === 1 ? '' : 's'}
+        </p>
+      </div>
+    ))}
+  </section>
+) : (
+  <section class="sprint-burnup sprint-burnup--empty">
+    <header class="head">
+      <h2 class="title">
+        <span class="glyph" aria-hidden="true">◆</span> SPRINT BURNUP
+      </h2>
+    </header>
+    <p class="empty-state">No sprint data yet</p>
+  </section>
+)}
+
+<script is:inline>
+  (() => {
+    const root = document.querySelector('[data-sprintburnup-root]');
+    if (!root) return;
+    const sel = root.querySelector('[data-sprint-select]');
+    if (!sel) return;
+    sel.addEventListener('change', (e) => {
+      const id = e.target.value;
+      root.querySelectorAll('.sprint-view').forEach(v => {
+        v.hidden = v.dataset.sprintId !== id;
+      });
+    });
+  })();
+</script>
+
+<style>
+  /* ── Container ──────────────────────────────────────────────── */
+  .sprint-burnup {
+    position: relative;
+    border: 1px solid var(--border);
+    background: var(--bg-panel);
+    padding: var(--space-5);
+  }
+
+  /* ── Header ─────────────────────────────────────────────────── */
+  .head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-4);
+    margin-bottom: var(--space-4);
+    flex-wrap: wrap;
+  }
+
+  .title {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: var(--size-sm);
+    color: var(--fg-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    white-space: nowrap;
+  }
+  .title .glyph {
+    color: var(--accent);
+    font-size: 0.65em;
+  }
+
+  /* ── Sprint selector ────────────────────────────────────────── */
+  .select-wrap {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  .select-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--fg-dim);
+  }
+  .sprint-select {
+    font-family: var(--font-mono);
+    font-size: var(--size-sm);
+    background: var(--bg);
+    color: var(--fg);
+    border: 1px solid var(--border-strong);
+    padding: 2px var(--space-3);
+    letter-spacing: 0.04em;
+    cursor: pointer;
+  }
+  .sprint-select:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+
+  /* ── Per-sprint meta strip ──────────────────────────────────── */
+  .head-meta {
+    font-size: var(--size-sm);
+    color: var(--fg-dim);
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+    margin-bottom: var(--space-3);
+  }
+  .sprint-id   { color: var(--accent); font-weight: 600; }
+  .milestone   { color: var(--fg); }
+  .budget-pct  { color: var(--accent); font-weight: 600; }
+  .budget-k    { color: var(--fg-dim); }
+  .sep         { color: var(--muted); margin: 0 var(--space-2); }
+  .badge-current {
+    display: inline-block;
+    margin-left: var(--space-2);
+    padding: 0 var(--space-2);
+    font-size: 9px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent-ink);
+    background: var(--accent);
+  }
+
+  /* ── Chart outer ────────────────────────────────────────────── */
+  .chart-outer { display: flex; align-items: stretch; }
+
+  .chart-wrap {
+    position: relative;
+    flex: 1 1 0;
+    min-width: 0;
+    height: 200px;
+  }
+
+  .chart-svg { display: block; width: 100%; height: 100%; }
+
+  .grid-line {
+    stroke: var(--border);
+    stroke-width: 0.5;
+    stroke-dasharray: 1 3;
+  }
+
+  .ref-line {
+    stroke: var(--accent-dim);
+    stroke-width: 1.5;
+    fill: none;
+  }
+
+  .work-line {
+    stroke: var(--accent);
+    stroke-width: 2;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+    fill: none;
+    @media (prefers-reduced-motion: no-preference) {
+      transition: opacity var(--motion-fast) var(--easing);
+    }
+  }
+  .work-line:hover { opacity: 0.80; }
+
+  .overhead-line {
+    stroke: var(--accent-dim);
+    stroke-width: 1.5;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+    stroke-dasharray: 4 3;
+    fill: none;
+    @media (prefers-reduced-motion: no-preference) {
+      transition: opacity var(--motion-fast) var(--easing);
+    }
+  }
+  .overhead-line:hover { opacity: 0.70; }
+
+  .work-dot {
+    fill: var(--accent);
+    stroke: var(--bg-panel);
+    stroke-width: 2;
+  }
+
+  /* ── HTML overlay axis labels ──────────────────────────────── */
+  .ytick, .xtick {
+    position: absolute;
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--muted);
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+    pointer-events: none;
+    line-height: 1;
+  }
+  .ytick {
+    right: calc(100% + 2px);
+    width: 36px;
+    text-align: right;
+    transform: translateY(-50%);
+  }
+  .xtick {
+    bottom: 4px;
+    transform: translateX(-50%);
+  }
+  .xtick-first { transform: translateX(0); }
+  .xtick-last  { transform: translateX(-100%); }
+
+  /* ── Legend ─────────────────────────────────────────────────── */
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3) var(--space-5);
+    margin-top: var(--space-4);
+    font-size: 10px;
+    color: var(--fg-dim);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  .legend-swatch {
+    display: inline-block;
+    width: 14px;
+    height: 3px;
+    flex-shrink: 0;
+  }
+  .legend-work { background: var(--accent); }
+  .legend-overhead {
+    background: transparent;
+    border-bottom: 2px dashed var(--accent-dim);
+    height: 0;
+    margin-bottom: 1px;
+  }
+  .legend-ref {
+    background: transparent;
+    border-bottom: 2px dashed var(--accent-dim);
+    height: 0;
+    margin-bottom: 1px;
+    opacity: 0.6;
+  }
+
+  /* ── Caption ────────────────────────────────────────────────── */
+  .chart-caption {
+    font-family: var(--font-mono);
+    font-size: var(--size-sm);
+    color: var(--fg-dim);
+    margin: var(--space-3) 0 0;
+    letter-spacing: 0.02em;
+  }
+
+  /* ── Empty state ────────────────────────────────────────────── */
+  .empty-state {
+    font-family: var(--font-mono);
+    font-size: var(--size-md);
+    color: var(--muted);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin: var(--space-5) 0;
+    text-align: center;
+  }
+
+  /* ── Responsive: 390px mobile ───────────────────────────────── */
+  @media (max-width: 640px) {
+    .title { font-size: 10px; }
+    .chart-wrap { height: 160px; }
+    .head { gap: var(--space-2); }
+    .head-meta { font-size: 10px; white-space: normal; }
+    .legend { gap: var(--space-2) var(--space-3); font-size: 9px; }
+    .chart-caption { font-size: 10px; }
+    .sprint-select { font-size: 10px; }
+    .select-label { font-size: 9px; }
+  }
+</style>

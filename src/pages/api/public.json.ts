@@ -13,7 +13,7 @@ export function GET(): Response {
     return new Response(data, {
       headers: {
         'Content-Type': 'application/json',
-        'Cache-Control': 'max-age=300',
+        'Cache-Control': 'max-age=60, stale-while-revalidate=300',
       },
     });
   } catch {

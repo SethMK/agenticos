@@ -571,6 +571,11 @@ async function collectMcpServers(homeSettingsPath: string): Promise<{
 // triggering the main() side-effect in this file.
 export { PLAN_QUOTAS } from "./quotas";
 
+// SESSION_GAP_HOURS = 5 — boundary heuristic for "current session" detection.
+// May split a long overnight session incorrectly. Acceptable for MVP; tune later
+// if the live QuotaCard surfaces false session resets.
+const SESSION_GAP_HOURS = 5;
+
 // S066: project-scoped quota dirs — substring match against ParsedRow.project (raw dir-name string).
 // Include any row whose .project contains ANY element of this array.
 // Initial value covers the two AgenticOS sibling repos.
@@ -623,6 +628,12 @@ type PublicSnapshotTotals = {
   project_tokens_total: number;
   project_tokens_input: number;
   project_tokens_output: number;
+  // S059: current session quota fields
+  current_session_tokens_k: number;        // integer; quota-burn tokens (input+output+cache_creation) in thousands
+  current_session_start: string | null;    // ISO-8601 timestamp of session's first entry; null if no entry in last 24h
+  current_session_id: string;             // ISO date prefix of current_session_start (e.g. "2026-05-22"); "" when null
+  current_session_pct: number;            // float 0–100, two decimal places, relative to weekly_quota_total_k * 1000
+  quota_snapshot_at: string;              // ISO-8601 timestamp when the pipeline ran
 };
 
 type CountsTrend7d = {
@@ -762,6 +773,87 @@ function buildWeeklyQuota(
     weekly_quota_project_total_k,
     weekly_quota_project_pct,
     weekly_quota_project_dirs: WEEKLY_QUOTA_PROJECT_DIRS,
+  };
+}
+
+// S059: current-session quota — walk parsed rows to detect the active session boundary.
+// Session boundary heuristic: a gap of ≥ SESSION_GAP_HOURS between consecutive entries
+// (chronologically ordered) marks the start of the current session. Everything after the
+// most-recent such gap (up to the latest row) is the current session.
+// If no row exists within the last 24h of now, returns zero/null sentinel values.
+function buildSessionQuota(
+  parsed: ParsedRow[],
+  now: Date,
+  weeklyQuotaTotalK: number,
+): {
+  current_session_tokens_k: number;
+  current_session_start: string | null;
+  current_session_id: string;
+  current_session_pct: number;
+  quota_snapshot_at: string;
+} {
+  const quotaSnapshotAt = now.toISOString();
+  const cutoff24h = now.getTime() - 24 * 60 * 60 * 1000;
+  const gapMs = SESSION_GAP_HOURS * 3600 * 1000;
+
+  // Filter to rows with valid timestamps, sorted chronologically.
+  const validRows = parsed
+    .filter((r) => r.ts && r.ts.length >= 10)
+    .sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
+
+  // No row within the last 24h → no active session.
+  const recentRows = validRows.filter((r) => new Date(r.ts).getTime() >= cutoff24h);
+  if (recentRows.length === 0) {
+    return {
+      current_session_tokens_k: 0,
+      current_session_start: null,
+      current_session_id: "",
+      current_session_pct: 0,
+      quota_snapshot_at: quotaSnapshotAt,
+    };
+  }
+
+  // Walk backwards from the most-recent row to find the session boundary.
+  // The session starts after the first gap ≥ SESSION_GAP_HOURS we encounter.
+  // If no such gap exists, the session is the entire validRows set (all rows form one continuous session).
+  let sessionStartIdx = 0; // default: include all valid rows
+  for (let i = validRows.length - 1; i > 0; i--) {
+    const curr = new Date(validRows[i]!.ts).getTime();
+    const prev = new Date(validRows[i - 1]!.ts).getTime();
+    if (curr - prev >= gapMs) {
+      sessionStartIdx = i;
+      break;
+    }
+  }
+
+  const sessionRows = validRows.slice(sessionStartIdx);
+  if (sessionRows.length === 0) {
+    return {
+      current_session_tokens_k: 0,
+      current_session_start: null,
+      current_session_id: "",
+      current_session_pct: 0,
+      quota_snapshot_at: quotaSnapshotAt,
+    };
+  }
+
+  const current_session_start = sessionRows[0]!.ts;
+  let sessionTokens = 0;
+  for (const r of sessionRows) {
+    sessionTokens += r.input_tokens + r.output_tokens + r.cache_creation_input_tokens;
+  }
+
+  const current_session_tokens_k = Math.round(sessionTokens / 1000);
+  const current_session_id = current_session_start.slice(0, 10);
+  const current_session_pct =
+    Math.round((current_session_tokens_k / weeklyQuotaTotalK) * 10000) / 100;
+
+  return {
+    current_session_tokens_k,
+    current_session_start,
+    current_session_id,
+    current_session_pct,
+    quota_snapshot_at: quotaSnapshotAt,
   };
 }
 
@@ -1191,6 +1283,42 @@ async function main() {
     `attribution-coverage project-vs-global: PASS (project=${weeklyQuota.weekly_quota_project_used_k}k, global=${weeklyQuota.weekly_quota_used_k}k)\n`,
   );
 
+  // S059: current-session quota fields — computed from raw parsed[] (same source as buildWeeklyQuota).
+  const sessionQuota = buildSessionQuota(parsed, now, weeklyQuota.weekly_quota_total_k);
+
+  // S059: attribution-coverage self-check — re-sum parsed rows from current_session_start to most-recent
+  // and assert it matches current_session_tokens_k * 1000 within 0.1% drift.
+  {
+    const { current_session_start, current_session_tokens_k } = sessionQuota;
+    if (current_session_start !== null) {
+      const validSorted = parsed
+        .filter((r) => r.ts && r.ts.length >= 10)
+        .sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
+      const sessionStartTs = current_session_start;
+      const reCheckTokens = validSorted
+        .filter((r) => r.ts >= sessionStartTs)
+        .reduce((acc, r) => acc + r.input_tokens + r.output_tokens + r.cache_creation_input_tokens, 0);
+      const reCheckK = Math.round(reCheckTokens / 1000);
+      const drift =
+        current_session_tokens_k === 0 && reCheckK === 0
+          ? 0
+          : Math.abs(current_session_tokens_k - reCheckK) / Math.max(current_session_tokens_k, reCheckK, 1);
+      if (drift > 0.001) {
+        process.stderr.write(
+          `attribution-coverage current_session: FAIL drift=${(drift * 100).toFixed(4)}% (buildSessionQuota=${current_session_tokens_k}k recheck=${reCheckK}k)\n`,
+        );
+        process.exit(1);
+      }
+      process.stdout.write(
+        `attribution-coverage current_session: PASS (session=${current_session_tokens_k}k, drift=${(drift * 100).toFixed(6)}%)\n`,
+      );
+    } else {
+      process.stdout.write(
+        `attribution-coverage current_session: PASS (no active session within 24h)\n`,
+      );
+    }
+  }
+
   // S076: compute all-time project-scoped token totals.
   const projectTotals = buildProjectTotals(priced);
 
@@ -1241,6 +1369,12 @@ async function main() {
     project_tokens_total: projectTotals.project_tokens_total,
     project_tokens_input: projectTotals.project_tokens_input,
     project_tokens_output: projectTotals.project_tokens_output,
+    // S059: current session quota fields
+    current_session_tokens_k: sessionQuota.current_session_tokens_k,
+    current_session_start: sessionQuota.current_session_start,
+    current_session_id: sessionQuota.current_session_id,
+    current_session_pct: sessionQuota.current_session_pct,
+    quota_snapshot_at: sessionQuota.quota_snapshot_at,
   };
 
   // public.json — redacted names, no project_raw.

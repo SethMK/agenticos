@@ -1,0 +1,186 @@
+---
+/**
+ * QuotaCard.astro — dual SVG progress-bar quota card (S063).
+ *
+ * Replaces the SUBSCRIPTION StatCard on `/`. Shows WEEKLY and SESSION
+ * consumption as inline SVG bars, with a subordinate context
+ * line showing lifetime EUR spend + plan name below.
+ *
+ * Standalone component (not a StatCard extension) because:
+ * - No single hero numeral — StatCard's value-row slot is unused.
+ * - Two bar rows require layout StatCard cannot express cleanly.
+ * - Keeps StatCard's {label, value, context} API clean for the other 5 cards.
+ */
+export interface Props {
+  weeklyPct: number;
+  sessionPct: number;
+  subscriptionTotal: number | null;
+  subscriptionCurrency: string;
+  currentPlan: string;
+  payingSince: string;
+}
+
+const {
+  weeklyPct,
+  sessionPct,
+  subscriptionTotal,
+  subscriptionCurrency,
+  currentPlan,
+  payingSince,
+} = Astro.props;
+
+import { formatCurrency } from '../lib/format.ts';
+
+const clamp = (n: number) => Math.max(0, Math.min(100, n));
+const weeklyFill = clamp(weeklyPct);
+const sessionFill = clamp(sessionPct);
+
+const contextLine = subscriptionTotal !== null
+  ? `${formatCurrency(subscriptionTotal, subscriptionCurrency)} — ${currentPlan.toUpperCase()} since ${payingSince}`
+  : '— no subscription data —';
+---
+<article class="quota-card" aria-label="QUOTA stat">
+  <span class="bracket bracket-tl" aria-hidden="true"></span>
+  <span class="bracket bracket-tr" aria-hidden="true"></span>
+  <span class="bracket bracket-bl" aria-hidden="true"></span>
+  <span class="bracket bracket-br" aria-hidden="true"></span>
+
+  <div class="label">QUOTA</div>
+
+  <div class="bars">
+    <div class="quota-row">
+      <span class="quota-label">WEEKLY (est.)</span>
+      <span class="quota-bar" aria-label={`Weekly quota: ${weeklyPct.toFixed(1)}%`}>
+        <svg width="100%" height="8" preserveAspectRatio="none" aria-hidden="true">
+          <rect x="0" y="0" width="100%" height="8" fill="var(--border)"/>
+          <rect x="0" y="0" width={`${weeklyFill}%`} height="8" fill="var(--accent)" data-quota-weekly/>
+        </svg>
+      </span>
+      <span class="quota-pct" data-quota-weekly-pct>{weeklyPct.toFixed(1)}%</span>
+    </div>
+    <div class="quota-row">
+      <span class="quota-label">SESSION</span>
+      <span class="quota-bar" aria-label={`Session quota: ${sessionPct.toFixed(1)}%`}>
+        <svg width="100%" height="8" preserveAspectRatio="none" aria-hidden="true">
+          <rect x="0" y="0" width="100%" height="8" fill="var(--border)"/>
+          <rect x="0" y="0" width={`${sessionFill}%`} height="8" fill="var(--accent)" data-quota-session/>
+        </svg>
+      </span>
+      <span class="quota-pct" data-quota-session-pct>{sessionPct.toFixed(1)}%</span>
+    </div>
+  </div>
+
+  <div class="quota-context">{contextLine}</div>
+</article>
+
+<style>
+  .quota-card {
+    position: relative;
+    border: 1px solid var(--border);
+    background: var(--bg-panel);
+    padding: var(--space-5);
+    min-height: 8.5rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    transition: background var(--motion-fast) var(--easing);
+  }
+  .quota-card:hover {
+    background: var(--bg-elevated);
+  }
+
+  /* Corner-bracket framing — matches StatCard */
+  .bracket {
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    border: 1px solid var(--accent);
+  }
+  .bracket-tl { top: -1px; left: -1px; border-right: 0; border-bottom: 0; }
+  .bracket-tr { top: -1px; right: -1px; border-left: 0; border-bottom: 0; }
+  .bracket-bl { bottom: -1px; left: -1px; border-right: 0; border-top: 0; }
+  .bracket-br { bottom: -1px; right: -1px; border-left: 0; border-top: 0; }
+
+  /* Label row — mirrors StatCard .label */
+  .label {
+    font-size: var(--size-sm);
+    color: var(--fg-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  .label::before {
+    content: '◆';
+    color: var(--accent);
+    font-size: 0.65em;
+  }
+
+  /* Bar section */
+  .bars {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    margin: var(--space-3) 0 var(--space-2);
+  }
+
+  .quota-row {
+    display: grid;
+    grid-template-columns: max-content 1fr max-content;
+    align-items: center;
+    gap: var(--space-2);
+    font-family: var(--font-mono, monospace);
+    font-size: var(--size-sm);
+  }
+
+  .quota-label {
+    color: var(--fg-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    white-space: nowrap;
+  }
+
+  .quota-bar {
+    display: block;
+    overflow: hidden;
+    line-height: 0;
+    align-self: center;
+  }
+
+  .quota-bar svg {
+    display: block;
+    width: 100%;
+  }
+
+  .quota-pct {
+    color: var(--fg);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  /* Context line — visually subordinate (smaller + dimmer) */
+  .quota-context {
+    font-size: calc(var(--size-sm) * 0.85);
+    color: var(--muted);
+    letter-spacing: 0.02em;
+    line-height: 1.3;
+  }
+</style>
+
+<script>
+  try {
+    const data = await fetch('/api/public.json').then(r => r.json());
+    const w = data?.totals?.weekly_quota_pct;
+    const s = data?.totals?.current_session_pct;
+    const patch = (bar, pct, v) => {
+      bar?.setAttribute('width', v + '%');
+      const el = document.querySelector('[' + pct + ']');
+      if (el) el.textContent = v.toFixed(1) + '%';
+    };
+    if (typeof w === 'number') patch(
+      document.querySelector('[data-quota-weekly]'), 'data-quota-weekly-pct', w);
+    if (typeof s === 'number') patch(
+      document.querySelector('[data-quota-session]'), 'data-quota-session-pct', s);
+  } catch {}
+</script>

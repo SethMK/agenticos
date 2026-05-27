@@ -359,7 +359,7 @@ function fmtMin(m?: number): string {
   /* Mobile adjustments */
   @media (max-width: 640px) {
     .log li {
-      grid-template-columns: 50px 50px 1fr;
+      grid-template-columns: 50px 50px minmax(0, 1fr);
     }
     .t-meta { display: none; }
     .chap-head { grid-template-columns: auto 1fr; gap: 10px; }

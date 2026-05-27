@@ -13,6 +13,7 @@ export const prerender = true;
  */
 import TerminalLayout from '../layouts/TerminalLayout.astro';
 import StatCard from '../components/StatCard.astro';
+import QuotaCard from '../components/QuotaCard.astro';
 import ModelSplitChart from '../components/ModelSplitChart.astro';
 import ProjectSplitChart from '../components/ProjectSplitChart.astro';
 import UsageChart from '../components/UsageChart.astro';
@@ -26,6 +27,8 @@ const subscriptionCurrency = snapshot.totals.subscription_currency;
 const currentPlan = snapshot.totals.current_plan;
 const currentPlanSince = snapshot.totals.current_plan_since;
 const payingSince = snapshot.totals.paying_since ?? currentPlanSince;
+const weeklyQuotaPct = snapshot.totals.weekly_quota_pct as number;
+const currentSessionPct = snapshot.totals.current_session_pct as number;
 const { projects, skills, agents, mcp_servers, counts_trend_7d, top_skills, top_agents, top_mcp_servers } = snapshot.counts as any;
 // S025: extract per-entity sparkline arrays; null-safe (may be absent on old snapshots).
 const trend7d = (counts_trend_7d as any) ?? null;
@@ -51,7 +54,7 @@ const tokensDelta = weekDelta(snapshot.daily as { tokens: number; usd: number }[
 <TerminalLayout title="AGENTICOS — /">
   <main id="main-content" class="stats" aria-label="Headline stats">
     <StatCard label="TOKENS" value={formatTokens(tokens)} delta={tokensDelta} unit="tok" />
-    <StatCard label="SUBSCRIPTION" value={formatCurrency(subscriptionTotal, subscriptionCurrency)} context={`— ${currentPlan.charAt(0).toUpperCase() + currentPlan.slice(1)}, paying since ${payingSince}`} />
+    <QuotaCard weeklyPct={weeklyQuotaPct} sessionPct={currentSessionPct} subscriptionTotal={subscriptionTotal} subscriptionCurrency={subscriptionCurrency} currentPlan={currentPlan} payingSince={payingSince} />
     <StatCard label="PROJECTS" value={formatInt(projects)} trend={trend7d?.projects ?? undefined} />
     <StatCard label="SKILLS" value={formatInt(skills)} trend={trend7d?.skills ?? undefined} topNames={top_skills} />
     <StatCard label="AGENTS" value={formatInt(agents)} trend={trend7d?.agents ?? undefined} topNames={top_agents} />

@@ -19,15 +19,21 @@ export interface EpicEntry {
   id: string;
   title: string;
   status: string;
+  milestone?: string;
   story_count: number;
   done_count: number;
 }
 
 interface Props {
   epics: EpicEntry[];
+  defaultScope?: string;
+  hasMilestones?: boolean;
 }
 
-const { epics } = Astro.props;
+const { epics, defaultScope, hasMilestones = false } = Astro.props;
+const visibleCount = hasMilestones
+  ? epics.filter((e) => e.milestone === defaultScope).length
+  : epics.length;
 
 function epochClass(e: EpicEntry): string {
   if (e.done_count === e.story_count && e.story_count > 0) return 'done';
@@ -46,14 +52,14 @@ function epochPct(e: EpicEntry): number {
 <section class="spine" aria-label="Epic timeline">
   <span class="bl" aria-hidden="true"></span>
   <span class="br" aria-hidden="true"></span>
-  <div class="spine-label">BUILD SPINE · {epics.length} EPICS, ORDERED BY BIRTH</div>
+  <div class="spine-label">BUILD SPINE · <span data-ms-count>{visibleCount}</span> EPICS, ORDERED BY BIRTH</div>
   <div class="spine-grid">
     {epics.map((e) => {
       const cls = epochClass(e);
       const pct = epochPct(e);
       const statusLabel = cls === 'done' ? 'done' : cls === 'active' ? 'active' : 'planned';
       return (
-        <div class={`epoch ${cls}`} aria-label={`${e.id}: ${e.title}, ${e.done_count} of ${e.story_count} done, ${statusLabel}`}>
+        <div class={`epoch ${cls}`} data-ms={e.milestone ?? ''} hidden={hasMilestones && e.milestone !== defaultScope} aria-label={`${e.id}: ${e.title}, ${e.done_count} of ${e.story_count} done, ${statusLabel}`}>
           <div class="id">{e.id}</div>
           <span class="pin" aria-hidden="true"></span>
           <div class="name">{e.title}</div>
@@ -132,6 +138,7 @@ function epochPct(e: EpicEntry): number {
     position: relative;
     z-index: 1;
   }
+  .epoch[hidden] { display: none; }
 
   .epoch .id {
     font-size: 11px;

@@ -18,66 +18,130 @@ interface ColumnCounts {
   done: number;
 }
 
+interface MilestoneAgg {
+  id: string;
+  title: string;
+  status: string;
+  is_current: boolean;
+  epic_count: number;
+  stories_total: number;
+  stories_done: number;
+  stories_backlog: number;
+  stories_ready: number;
+  stories_in_progress: number;
+  stories_review: number;
+  tokens_k: number;
+  wall_clock_min: number;
+  tokens_source: string;
+  sprint_count: number;
+  models: string[];
+  typical_tokens_k: number | null;
+  typical_minutes: number | null;
+  typical_model: string | null;
+  typical_agents: string;
+  size_cap: string;
+}
+
 interface Props {
   columns: ColumnCounts;
   totalEpics: number;
+  scopes?: MilestoneAgg[];
+  defaultScope?: string;
 }
 
-const { columns, totalEpics } = Astro.props;
+const { columns, totalEpics, scopes, defaultScope } = Astro.props;
 
 const total = columns.backlog + columns.ready + columns.in_progress + columns.review + columns.done;
+
+// Milestone-scoped mode when aggregates are supplied; else legacy single block.
+const scoped = Array.isArray(scopes) && scopes.length > 0;
+
+function fmtTokensK(k: number): string {
+  if (!k) return '—';
+  if (k >= 1000) return `~${(k / 1000).toFixed(1)}M`;
+  return `~${k}k`;
+}
+function fmtWall(min: number): string {
+  if (!min) return '—';
+  if (min < 60) return `~${min}m`;
+  const h = Math.floor(min / 60);
+  const rem = min % 60;
+  return rem ? `~${h}h ${rem}m` : `~${h}h`;
+}
+function pad2(n: number): string {
+  return String(n).padStart(2, '0');
+}
 ---
 
 <aside class="sidecar" aria-label="Build receipt and agent loop">
 
-  <!-- Section 1: Raw column counts -->
-  <section class="receipt-section">
-    <h2 class="side-heading"><span class="glyph" aria-hidden="true">◆</span> build receipt</h2>
-    <ul class="stats-list">
-      <li>
-        <span class="k">stories total</span>
-        <span class="v accent">{total}</span>
-      </li>
-      <li>
-        <span class="k">done</span>
-        <span class="v accent">{columns.done}</span>
-      </li>
-      <li>
-        <span class="k">in flight</span>
-        <span class="v">{String(columns.in_progress).padStart(2, '0')}</span>
-      </li>
-      <li>
-        <span class="k">ready</span>
-        <span class="v">{String(columns.ready).padStart(2, '0')}</span>
-      </li>
-      <li>
-        <span class="k">backlog</span>
-        <span class="v">{String(columns.backlog).padStart(2, '0')}</span>
-      </li>
-      <li>
-        <span class="k">review</span>
-        <span class="v">{String(columns.review).padStart(2, '0')}</span>
-      </li>
-      <li>
-        <span class="k">epics</span>
-        <span class="v">{String(totalEpics).padStart(2, '0')}</span>
-      </li>
-    </ul>
-  </section>
+  {scoped ? scopes!.map((m) => (
+    <div class="ms-scope" data-ms-scope={m.id} hidden={m.id !== defaultScope}>
+      <!-- Section 1: Milestone receipt -->
+      <section class="receipt-section">
+        <h2 class="side-heading"><span class="glyph" aria-hidden="true">◆</span> {m.id === 'ALL' ? 'all milestones' : `${m.id} · ${m.title}`}</h2>
+        <ul class="stats-list">
+          <li><span class="k">stories done</span><span class="v accent">{m.stories_done} / {m.stories_total}</span></li>
+          <li><span class="k">in flight</span><span class="v">{pad2(m.stories_in_progress)}</span></li>
+          <li><span class="k">ready</span><span class="v">{pad2(m.stories_ready)}</span></li>
+          <li><span class="k">backlog</span><span class="v">{pad2(m.stories_backlog)}</span></li>
+          <li><span class="k">review</span><span class="v">{pad2(m.stories_review)}</span></li>
+          <li><span class="k">epics</span><span class="v">{pad2(m.epic_count)}</span></li>
+          <li>
+            <span class="k">tokens</span>
+            <span class="v accent">{fmtTokensK(m.tokens_k)}{m.tokens_source === 'story-est' ? <span class="est" title="estimate rollup — no sprint ground-truth"> est</span> : null}</span>
+          </li>
+          <li><span class="k">wall-clock</span><span class="v">{fmtWall(m.wall_clock_min)}</span></li>
+          <li><span class="k">sprints</span><span class="v">{pad2(m.sprint_count)}</span></li>
+          {m.models.length > 0 && (
+            <li><span class="k">models</span><span class="v small">{m.models.join(' · ')}</span></li>
+          )}
+        </ul>
+      </section>
 
-  <!-- Section 2: Typical story anchor -->
-  <section class="receipt-section">
-    <h2 class="side-heading"><span class="glyph" aria-hidden="true">◆</span> typical story</h2>
-    <ul class="stats-list">
-      <li><span class="k">tokens</span><span class="v small">~105k</span></li>
-      <li><span class="k">wall-clock</span><span class="v small">~6m</span></li>
-      <li><span class="k">agents</span><span class="v small">impl + qa</span></li>
-      <li><span class="k">model</span><span class="v small">sonnet</span></li>
-      <li><span class="k">size cap</span><span class="v small">≤ 3 pts</span></li>
-    </ul>
-  </section>
+      <!-- Section 2: Typical story anchor (per milestone) -->
+      <section class="receipt-section">
+        <h2 class="side-heading"><span class="glyph" aria-hidden="true">◆</span> typical story</h2>
+        <ul class="stats-list">
+          <li><span class="k">tokens</span><span class="v small">{m.typical_tokens_k ? `~${m.typical_tokens_k}k` : '—'}</span></li>
+          <li><span class="k">wall-clock</span><span class="v small">{m.typical_minutes ? `~${m.typical_minutes}m` : '—'}</span></li>
+          <li><span class="k">agents</span><span class="v small">{m.typical_agents}</span></li>
+          <li><span class="k">model</span><span class="v small">{m.typical_model ?? '—'}</span></li>
+          <li><span class="k">size cap</span><span class="v small">{m.size_cap}</span></li>
+        </ul>
+      </section>
+    </div>
+  )) : (
+    <Fragment>
+      <!-- Section 1: Raw column counts (legacy, no milestone aggregates) -->
+      <section class="receipt-section">
+        <h2 class="side-heading"><span class="glyph" aria-hidden="true">◆</span> build receipt</h2>
+        <ul class="stats-list">
+          <li><span class="k">stories total</span><span class="v accent">{total}</span></li>
+          <li><span class="k">done</span><span class="v accent">{columns.done}</span></li>
+          <li><span class="k">in flight</span><span class="v">{pad2(columns.in_progress)}</span></li>
+          <li><span class="k">ready</span><span class="v">{pad2(columns.ready)}</span></li>
+          <li><span class="k">backlog</span><span class="v">{pad2(columns.backlog)}</span></li>
+          <li><span class="k">review</span><span class="v">{pad2(columns.review)}</span></li>
+          <li><span class="k">epics</span><span class="v">{pad2(totalEpics)}</span></li>
+        </ul>
+      </section>
 
-  <!-- Section 3: Agent-loop ASCII diagram -->
+      <!-- Section 2: Typical story anchor -->
+      <section class="receipt-section">
+        <h2 class="side-heading"><span class="glyph" aria-hidden="true">◆</span> typical story</h2>
+        <ul class="stats-list">
+          <li><span class="k">tokens</span><span class="v small">~105k</span></li>
+          <li><span class="k">wall-clock</span><span class="v small">~6m</span></li>
+          <li><span class="k">agents</span><span class="v small">impl + qa</span></li>
+          <li><span class="k">model</span><span class="v small">sonnet</span></li>
+          <li><span class="k">size cap</span><span class="v small">≤ 3 pts</span></li>
+        </ul>
+      </section>
+    </Fragment>
+  )}
+
+  <!-- Section 3: Agent-loop ASCII diagram (global, scope-independent) -->
   <section class="receipt-section">
     <h2 class="side-heading"><span class="glyph" aria-hidden="true">◆</span> the loop</h2>
     <div class="loop-box">
@@ -161,6 +225,14 @@ const total = columns.backlog + columns.ready + columns.in_progress + columns.re
   }
   .stats-list .v.accent { color: var(--accent); }
   .stats-list .v.small  { color: var(--fg); font-size: 12px; font-weight: 400; }
+  .stats-list .est {
+    color: var(--muted);
+    font-size: 9px;
+    font-weight: 400;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .ms-scope[hidden] { display: none; }
 
   /* Loop diagram */
   .loop-box {

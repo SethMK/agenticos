@@ -28,6 +28,7 @@ import SprintVelocityTrend from '../components/SprintVelocityTrend.astro';
 import SprintAccuracyTokens from '../components/SprintAccuracyTokens.astro';
 import SprintAccuracyTime from '../components/SprintAccuracyTime.astro';
 import snapshot from '../../data/snapshots/public.json';
+import asciichart from 'asciichart';
 
 // ── Type declarations ─────────────────────────────────────────────────────────
 
@@ -46,8 +47,33 @@ interface PmoEpic {
   id: string;
   title: string;
   status: string;
+  milestone?: string;
   story_count: number;
   done_count: number;
+}
+
+interface MilestoneAgg {
+  id: string;
+  title: string;
+  status: string;
+  is_current: boolean;
+  epic_count: number;
+  stories_total: number;
+  stories_done: number;
+  stories_backlog: number;
+  stories_ready: number;
+  stories_in_progress: number;
+  stories_review: number;
+  tokens_k: number;
+  wall_clock_min: number;
+  tokens_source: string;
+  sprint_count: number;
+  models: string[];
+  typical_tokens_k: number | null;
+  typical_minutes: number | null;
+  typical_model: string | null;
+  typical_agents: string;
+  size_cap: string;
 }
 
 interface PmoColumns {
@@ -65,6 +91,7 @@ const pmo = (snapshot as {
     columns?: PmoColumns;
     epics?: PmoEpic[];
     recent_stories?: PmoStory[];
+    milestones?: MilestoneAgg[];
     generated_at?: string;
   };
   totals?: {
@@ -97,6 +124,28 @@ const columns: PmoColumns = pmo.columns ?? {
 };
 const epics: PmoEpic[] = pmo.epics ?? [];
 const recentStories: PmoStory[] = pmo.recent_stories ?? [];
+
+// ── Milestone scoping (S040-style switcher) ───────────────────────────────────
+// Pre-computed per-milestone aggregates from the PMO export. The page renders
+// every chapter + a per-milestone sidebar block, then a client script toggles
+// visibility. Default scope = the current milestone (is_current); fall back to
+// the last real milestone, else ALL.
+const milestones: MilestoneAgg[] = pmo.milestones ?? [];
+const realMilestones = milestones.filter((m) => m.id !== 'ALL');
+const allScope = milestones.find((m) => m.id === 'ALL');
+// Switcher scopes: each real milestone, then ALL (history escape hatch).
+const scopes: MilestoneAgg[] = allScope ? [...realMilestones, allScope] : realMilestones;
+const currentMilestone =
+  realMilestones.find((m) => m.is_current) ??
+  realMilestones[realMilestones.length - 1];
+const defaultScope = currentMilestone?.id ?? 'ALL';
+const hasMilestones = scopes.length > 0;
+// Short status hints for the switcher buttons.
+const MS_HINT: Record<string, string> = {
+  closed: 'shipped',
+  active: 'active',
+  planned: 'planned',
+};
 
 // ── Headline stat calculations ────────────────────────────────────────────────
 
@@ -247,6 +296,25 @@ addIds(columns.backlog, 'backlog');
 // IDs NOT in recent_stories (no epic mapping): need the catch-all section
 const unmappedIds = allKanbanIds.filter((s) => !mappedIds.has(s.id));
 
+// ── ASCII cost chart (S034) — build-time only, zero client JS ────────────────
+
+interface DailyEntry {
+  date: string;
+  tokens: number;
+  usd: number;
+  messages: number;
+  in_tokens: number;
+  out_tokens: number;
+}
+
+const dailyEntries: DailyEntry[] = (snapshot as { daily?: DailyEntry[] }).daily ?? [];
+// Last 30 entries (or all available if fewer), no zero-padding
+const last30UsdSeries: number[] = dailyEntries.slice(-30).map((d) => d.usd);
+// Generate chart at build time — never reaches the client bundle
+const chartString: string = last30UsdSeries.length > 0
+  ? asciichart.plot(last30UsdSeries, { height: 8 })
+  : '(no daily data available)';
+
 // ── Section rule helper ───────────────────────────────────────────────────────
 // (rendered as static text — no component needed for a one-liner)
 ---
@@ -265,57 +333,35 @@ const unmappedIds = allKanbanIds.filter((s) => !mappedIds.has(s.id));
       <span class="accent">{totalStories} stories, {epics.length} epics, {storiesDone} already shipped</span> — the receipt is below.
     </p>
 
-    <!-- S091: 3 text sections BEFORE all existing content (after lede) -->
+    <!-- S091/S100: 3 text sections BEFORE all existing content (after lede) -->
 
-    <!-- Problem Statement -->
+    <!-- Problem & Solution (side-by-side pair at ≥1024px) -->
     <div class="section-rule" aria-hidden="true">
       <span class="rule-line">──────────────────────────────────────</span>
-      <span class="rule-label">sprint · problem statement</span>
+      <span class="rule-label">sprint · problem & solution</span>
       <span class="rule-line">──────────────────────────────────────</span>
     </div>
-    <section class="s091-text-section" aria-label="Problem statement">
-      <h2 class="s091-section-heading">Problem</h2>
-      <p class="s091-body">
-        Personal development under a Claude Max weekly token cap requires predictable, controlled token burn.
-        The existing kanban tracks WHAT (stories shipped) but not HOW MUCH (tokens consumed) or HOW FAST
-        (wall-clock minutes elapsed). Without structure, story-by-story pulls drift into runaway sessions
-        that exhaust the weekly quota. Before this approach, a single deep-work session burned 1.5M tokens
-        in 90 minutes with no checkpoint.
-      </p>
-      <p class="s091-body">
-        The token window resets weekly but session overhead compounds: every tool-call, re-read of context,
-        and orchestrator round-trip adds silent overhead that is invisible in the kanban view. Scope creep
-        inside a session is the dominant failure mode — a "quick" feature pull balloons into re-reading
-        three agent docs and refactoring a shared component, consuming three times the estimated budget
-        before the acceptance bullets are even checked.
-      </p>
-    </section>
+    <div class="s091-pair-grid">
+      <section class="s091-text-section" aria-label="Problem statement">
+        <h2 class="s091-section-heading">Problem</h2>
+        <p class="s091-body">
+          Claude Max resets weekly. Burn the window in one sitting and there is nothing left for the rest of the week.
+          The kanban was great at tracking what to build but blind to how much it cost to build it.
+          Scope would creep invisibly — a small story pulling in three agent docs, doubling its budget
+          before a single acceptance bullet was checked.
+        </p>
+      </section>
 
-    <!-- Solution -->
-    <div class="section-rule" aria-hidden="true">
-      <span class="rule-line">──────────────────────────────────────</span>
-      <span class="rule-label">sprint · solution</span>
-      <span class="rule-line">──────────────────────────────────────</span>
+      <section class="s091-text-section" aria-label="Solution">
+        <h2 class="s091-section-heading">Solution</h2>
+        <p class="s091-body">
+          Every sprint is a 60-minute box. Before it starts, must-ship items are locked; nice-to-haves are listed
+          but can be dropped without ceremony. The system tracks token spend at four checkpoints and pulls the brake
+          at the final one — no session can silently overrun. A short retrospective runs at close and either rolls
+          into the next sprint or stops the day's work.
+        </p>
+      </section>
     </div>
-    <section class="s091-text-section" aria-label="Solution">
-      <h2 class="s091-section-heading">Solution</h2>
-      <p class="s091-body">
-        The sprint-planner approach: 1-hour time-boxed sprints with MoSCoW-lite scope contract
-        (must-haves WILL ship, should-haves are droppable), two-budget tracking (work + overhead),
-        token-budget guard rails at 50/75/90/100% with hard-stop at 100%, role-based ceremony
-        (SM + PO sonnet agents + PM human), retro-driven self-improvement. Predictable cycles,
-        droppable scope, hard limits.
-      </p>
-      <p class="s091-body">
-        Each sprint opens with <code class="s091-code">/sprint-plan</code>: SM recommends capacity,
-        PO recommends story basket, PM negotiates scope and confirms. Execution runs a 60-minute
-        WIP=2 window — at most two stories in-flight simultaneously. Sprint closes with
-        <code class="s091-code">/sprint-close</code>: compute actuals, write demo dashboard,
-        four-agent parallel retro, decision sweep. The chain decision at close either loops to
-        the next sprint or halts. Guard rails enforce the budget contract so no session can silently
-        overrun.
-      </p>
-    </section>
 
     <!-- Project Division -->
     <div class="section-rule" aria-hidden="true">
@@ -326,10 +372,10 @@ const unmappedIds = allKanbanIds.filter((s) => !mappedIds.has(s.id));
     <section class="s091-text-section" aria-label="Project division">
       <h2 class="s091-section-heading">Project Division</h2>
       <p class="s091-body">
-        Milestone → Epic → Story hierarchy. M1 contains 8 shipped epics (E01–E08, the foundation
-        pipeline + dashboard). M2 is in progress (E09 Sprint Planner: 7/9 stories done).
-        M3 is deferred (E10 Productization). Stories sit under Epics; Epics roll up into Milestones;
-        Milestones are quarterly arcs.
+        The project is organized in three layers: Stories roll up into Epics; Epics roll up into Milestones.
+        Milestone 1 (foundation) is fully shipped — 8 epics, roughly 91 stories. Milestone 2 (Sprint Planner)
+        is in progress — 7 of 9 stories done. Milestone 3 (Productization) is deferred.
+        The grid below shows the current state of each arc.
       </p>
       <!-- TODO: migrate to pmo.milestones[] once export schema adds the field -->
       <div class="s091-milestone-grid" aria-label="Milestone summary">
@@ -405,6 +451,21 @@ const unmappedIds = allKanbanIds.filter((s) => !mappedIds.has(s.id));
     <p class="chart-footnote">
       Anthropic does not publish the exact Max 5x weekly token cap. The denominator uses a community-inferred estimate of ~180M tokens per week (the estimated global Max 5x budget). The projection band shows a 1.45×–1.86× bias-correction range derived from six-epic project actuals.
     </p>
+
+    <!-- S034: ASCII cost chart — 30-day USD spend, build-time only -->
+    <div class="section-rule" aria-hidden="true">
+      <span class="rule-line">──────────────────────────────────────</span>
+      <span class="rule-label">cost · 30-day usd spend</span>
+      <span class="rule-line">──────────────────────────────────────</span>
+    </div>
+    <section aria-label="30-day USD spend ASCII chart">
+      <pre class="asciichart" aria-hidden="true">{chartString}</pre>
+      <ul class="asciichart-fallback" aria-label="30-day USD spend values (text)">
+        {last30UsdSeries.map((v, i) => (
+          <li>day -{last30UsdSeries.length - i}: ${v.toFixed(4)}</li>
+        ))}
+      </ul>
+    </section>
 
     <!-- Sprint burnup (S088 component, S089 mount) — live SPR-NNN execution -->
     <div class="section-rule" aria-hidden="true">
@@ -745,11 +806,11 @@ const unmappedIds = allKanbanIds.filter((s) => !mappedIds.has(s.id));
     <!-- 4. Spine timeline (A-style) -->
     <div class="section-rule" aria-hidden="true">
       <span class="rule-line">──────────────────────────────────────</span>
-      <span class="rule-label">spine · {epics.length} epics, ordered by birth</span>
+      <span class="rule-label">spine · <span data-ms-count>{hasMilestones ? (currentMilestone?.epic_count ?? epics.length) : epics.length}</span> epics, ordered by birth</span>
       <span class="rule-line">──────────────────────────────────────</span>
     </div>
 
-    <SpineTimeline epics={epics} />
+    <SpineTimeline epics={epics} defaultScope={defaultScope} hasMilestones={hasMilestones} />
 
     <!-- 4. Two-column body: chapters + sidebar -->
     <div class="section-rule" aria-hidden="true">
@@ -758,23 +819,44 @@ const unmappedIds = allKanbanIds.filter((s) => !mappedIds.has(s.id));
       <span class="rule-line">──────────────────────────────────────</span>
     </div>
 
+    {hasMilestones && (
+      <div class="ms-switch" role="group" aria-label="Filter the build log by milestone" data-ms-switch>
+        {scopes.map((m) => (
+          <button
+            type="button"
+            class="ms-btn"
+            data-ms-btn={m.id}
+            aria-pressed={m.id === defaultScope ? 'true' : 'false'}
+            title={m.id === 'ALL' ? 'All milestones — full history' : m.title}
+          >
+            <span class="ms-btn-id">{m.id}</span>
+            <span class="ms-btn-hint">{m.id === 'ALL' ? 'history' : m.is_current ? 'current' : (MS_HINT[m.status] ?? '')}</span>
+          </button>
+        ))}
+      </div>
+    )}
+
     <div class="body-grid">
 
-      <!-- LEFT: Epic chapters -->
+      <!-- LEFT: Epic chapters (each tagged with its milestone for switcher toggling) -->
       <section class="chapters" aria-label="Build chapters, one per epic">
         {epics.map((epic, idx) => (
-          <EpicChapter
-            epic={epic}
-            stories={storiesForEpic(epic.id)}
-            inflightIds={inflightIds}
-            chapterNum={idx + 1}
-            subtitle={EPIC_SUBTITLES[epic.id]}
-          />
+          <div class="ms-chapter" data-ms={epic.milestone ?? ''} hidden={hasMilestones && epic.milestone !== defaultScope}>
+            <EpicChapter
+              epic={epic}
+              stories={storiesForEpic(epic.id)}
+              inflightIds={inflightIds}
+              chapterNum={idx + 1}
+              subtitle={EPIC_SUBTITLES[epic.id]}
+            />
+          </div>
         ))}
       </section>
 
-      <!-- RIGHT: Build receipt sidebar -->
+      <!-- RIGHT: Build receipt sidebar (milestone-scoped when aggregates exist) -->
       <BuildReceipt
+        scopes={hasMilestones ? scopes : undefined}
+        defaultScope={defaultScope}
         columns={{
           backlog: columns.backlog.length,
           ready: columns.ready.length,
@@ -945,6 +1027,56 @@ const unmappedIds = allKanbanIds.filter((s) => !mappedIds.has(s.id));
     letter-spacing: 0.04em;
   }
 
+  /* ── Milestone switcher ──────────────────────────────────── */
+  .ms-switch {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 18px;
+  }
+  .ms-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1px;
+    border: 1px solid var(--border-strong);
+    background: transparent;
+    color: var(--fg-dim);
+    font: inherit;
+    font-family: var(--font-mono);
+    padding: 5px 12px;
+    cursor: pointer;
+    border-radius: 0;
+    line-height: 1.3;
+  }
+  .ms-btn-id {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+  }
+  .ms-btn-hint {
+    font-size: 9px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .ms-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+  .ms-btn[aria-pressed="true"] {
+    color: var(--accent-ink);
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+  .ms-btn[aria-pressed="true"] .ms-btn-hint { color: var(--accent-ink); }
+  @media (prefers-reduced-motion: no-preference) {
+    .ms-btn { transition: background var(--motion-fast) var(--easing), color var(--motion-fast) var(--easing); }
+  }
+  /* Chapter wrapper is layout-transparent; `hidden` must still collapse it. */
+  .ms-chapter { display: contents; }
+  .ms-chapter[hidden] { display: none; }
+
   /* ── Two-column body ─────────────────────────────────────── */
   .body-grid {
     display: grid;
@@ -1061,6 +1193,24 @@ const unmappedIds = allKanbanIds.filter((s) => !mappedIds.has(s.id));
   }
 
   /* ── S091: Text sections ───────────────────────────────────── */
+  .s091-pair-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: clamp(1rem, 2vw, 1.5rem);
+    margin-block: 1.5rem;
+  }
+
+  @media (min-width: 1024px) {
+    .s091-pair-grid {
+      grid-template-columns: 1fr 1fr;
+      align-items: start;
+    }
+  }
+
+  .s091-pair-grid > .s091-text-section {
+    margin-block: 0;
+  }
+
   .s091-text-section {
     margin: 0 0 8px;
   }
@@ -1473,6 +1623,29 @@ const unmappedIds = allKanbanIds.filter((s) => !mappedIds.has(s.id));
     padding-top: 3px;
   }
 
+  /* ── S034: ASCII cost chart ────────────────────────────────── */
+  .asciichart {
+    color: var(--accent);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.2;
+    overflow-x: auto;
+    margin: 0 0 8px;
+    padding: 12px 14px;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    white-space: pre;
+  }
+  /* Accessible textual fallback — visually hidden, readable by screen readers */
+  .asciichart-fallback {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
   /* ── S091 Mobile reflow (390px) ─────────────────────────────── */
   @media (max-width: 640px) {
     .s091-milestone-grid {
@@ -1504,3 +1677,42 @@ const unmappedIds = allKanbanIds.filter((s) => !mappedIds.has(s.id));
     }
   }
 </style>
+
+<script>
+  // Milestone switcher: pure visibility toggle (no re-render). Mirrors the
+  // SprintBurnup hidden-attribute pattern. One handler flips aria-pressed on the
+  // buttons and shows/hides every [data-ms] element (chapters + sidebar blocks).
+  // ALL reveals everything.
+  (() => {
+    const sw = document.querySelector('[data-ms-switch]');
+    if (!sw) return;
+    // Chapters: ALL reveals every milestone. Sidebar blocks: exact match, so ALL
+    // shows only the aggregate block (not all four stacked).
+    // [data-ms] covers both spine epochs and chapter wrappers (same toggle rule).
+    const tagged = Array.from(document.querySelectorAll<HTMLElement>('[data-ms]'));
+    const sideBlocks = Array.from(document.querySelectorAll<HTMLElement>('[data-ms-scope]'));
+    const counters = Array.from(document.querySelectorAll<HTMLElement>('[data-ms-count]'));
+    const btns = Array.from(sw.querySelectorAll<HTMLButtonElement>('[data-ms-btn]'));
+
+    function apply(scope: string) {
+      for (const el of tagged) {
+        el.hidden = scope !== 'ALL' && el.dataset.ms !== scope;
+      }
+      for (const el of sideBlocks) {
+        el.hidden = el.dataset.msScope !== scope;
+      }
+      // Visible-epic count (count chapter wrappers only, not spine + chapters).
+      const n = document.querySelectorAll('.ms-chapter:not([hidden])').length;
+      for (const c of counters) c.textContent = String(n);
+      for (const b of btns) {
+        b.setAttribute('aria-pressed', b.dataset.msBtn === scope ? 'true' : 'false');
+      }
+    }
+
+    sw.addEventListener('click', (e) => {
+      const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-ms-btn]');
+      if (!btn || !btn.dataset.msBtn) return;
+      apply(btn.dataset.msBtn);
+    });
+  })();
+</script>

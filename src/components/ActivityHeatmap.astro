@@ -51,9 +51,7 @@ for (const row of dailyRows) {
 // days to fix the start. This guarantees the rightmost column
 // always contains the current week (Mon..Sun) regardless of weekday.
 // ---------------------------------------------------------------
-const COLS = 53;
 const ROWS = 7;
-const TOTAL = COLS * ROWS; // 371
 
 function pad2(n: number): string {
   return n < 10 ? `0${n}` : `${n}`;
@@ -69,14 +67,43 @@ const anchor = new Date(Date.UTC(todayUtc.getUTCFullYear(), todayUtc.getUTCMonth
 // Find this week's Monday in ISO order (Mon=0..Sun=6).
 // getUTCDay(): Sun=0..Sat=6  →  shift to Mon=0..Sun=6.
 const isoDow = (anchor.getUTCDay() + 6) % 7;
-// Sunday-of-current-week (end of column 53).
+// Sunday-of-current-week (end of the rightmost column).
 const sundayOfCurrentWeek = new Date(anchor);
 sundayOfCurrentWeek.setUTCDate(anchor.getUTCDate() + (6 - isoDow));
 
-// Start of grid = sundayOfCurrentWeek - (TOTAL - 1) days, then back up to its Monday.
-// Easier: walk back exactly COLS*ROWS - 1 days from sundayOfCurrentWeek, that lands on a Monday.
-const gridStart = new Date(sundayOfCurrentWeek);
-gridStart.setUTCDate(sundayOfCurrentWeek.getUTCDate() - (TOTAL - 1));
+// Max window: 53 weeks = 371 days (Monday 53 weeks ago).
+const maxGridStart = new Date(sundayOfCurrentWeek);
+maxGridStart.setUTCDate(sundayOfCurrentWeek.getUTCDate() - (53 * 7 - 1));
+
+// Clamp gridStart to the Monday of the first week that has data (if later than the max window).
+// This kills empty leading months when the project is young (<53 weeks old).
+const MIN_COLS = 13; // ≈3-month floor — prevents cramped ~5-week grid on young projects.
+let gridStart = maxGridStart;
+const firstDataDates = dailyRows
+  .filter((r) => r.tokens > 0)
+  .map((r) => r.date)
+  .sort(); // ISO sort = calendar sort
+if (firstDataDates.length > 0) {
+  const fd = new Date(firstDataDates[0]! + 'T00:00:00Z');
+  const fdDow = (fd.getUTCDay() + 6) % 7; // Mon=0..Sun=6
+  const fdMonday = new Date(fd);
+  fdMonday.setUTCDate(fd.getUTCDate() - fdDow);
+  if (fdMonday.getTime() > maxGridStart.getTime()) {
+    gridStart = fdMonday;
+  }
+}
+
+// Recompute COLS from the clamped span, then apply MIN_COLS floor.
+// If rawCOLS < MIN_COLS, push gridStart back so leading cells render as level-0.
+const rawCOLS = Math.round(
+  (sundayOfCurrentWeek.getTime() - gridStart.getTime() + 86_400_000) / (7 * 86_400_000)
+);
+const COLS = Math.max(MIN_COLS, Math.min(53, rawCOLS));
+if (COLS > rawCOLS) {
+  gridStart = new Date(sundayOfCurrentWeek);
+  gridStart.setUTCDate(sundayOfCurrentWeek.getUTCDate() - (COLS * 7 - 1));
+}
+const TOTAL = COLS * ROWS;
 
 interface Cell {
   date: string;
@@ -223,7 +250,7 @@ const avgTokensPerActiveDay = allActiveDays.length > 0
   : 0;
 const avgTokensFormatted = allActiveDays.length > 0 ? formatTokens(Math.round(avgTokensPerActiveDay)) : '—';
 ---
-<section class="heatmap" aria-label="Daily token activity, last 53 weeks">
+<section class="heatmap" aria-label={`Daily token activity, last ${COLS} weeks`}>
   <header class="head">
     <h2 class="title"><span class="glyph" aria-hidden="true">◆</span> ACTIVITY</h2>
     <div class="totals">

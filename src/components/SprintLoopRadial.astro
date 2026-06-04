@@ -1,0 +1,519 @@
+---
+/**
+ * SprintLoopRadial.astro — S101
+ *
+ * Radial sprint loop diagram replacing the S091 vertical flowchart.
+ * Proportional arcs: planning 7% / execution 80% / close 13% of circumference.
+ * Geometry proven in notes/spikes/s149-radial-prototype.html — transcribed here.
+ *
+ * All paths computed at build-time in frontmatter.
+ * Client-side script handles only draw-in animation (needs getTotalLength()).
+ * No new design tokens. No Framer Motion. Pure SVG + CSS.
+ */
+
+// ── Geometry constants ─────────────────────────────────────────────────────
+const CX = 300, CY = 305;
+const R       = 205;   // outer arc ring radius
+const SW      = 20;    // arc stroke-width (uniform)
+const R_TRIP  = 178;   // tripwire dot radius (inside outer ring)
+const R_INNER = 148;   // sub-state node center radius
+const R_GATE  = 234;   // Q-gate leader-line endpoint radius
+const R_PHLBL = 252;   // phase-name label radius
+
+// ── Phase proportions ───────────────────────────────────────────────────────
+const P_PLAN  = 0.07;
+const P_EXEC  = 0.80;
+const P_CLOSE = 0.13;
+
+// ── Angular spans (SVG: 0°=right, 90°=bottom, clockwise) ──────────────────
+const A_START     = 90;                              // /sprint-plan at 6 o'clock
+const A_PLAN_END  = A_START    + P_PLAN  * 360;      // 115.2°
+const A_EXEC_END  = A_PLAN_END + P_EXEC  * 360;      // 403.2°
+const A_CLOSE_END = A_EXEC_END + P_CLOSE * 360;      // 450° = A_START
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+const rad = (d: number) => d * Math.PI / 180;
+function pt(r: number, deg: number): [number, number] {
+  return [CX + r * Math.cos(rad(deg)), CY + r * Math.sin(rad(deg))];
+}
+function f(n: number): string { return n.toFixed(2); }
+
+function arcPath(r: number, a1: number, a2: number): string {
+  const [x1, y1] = pt(r, a1);
+  const [x2, y2] = pt(r, a2);
+  const span = ((a2 - a1) % 360 + 360) % 360;
+  const lg = span > 180 ? 1 : 0;
+  return `M${f(x1)} ${f(y1)} A${r} ${r} 0 ${lg} 1 ${f(x2)} ${f(y2)}`;
+}
+
+// ── Arc paths (build-time) ─────────────────────────────────────────────────
+const dPlan  = arcPath(R, A_START,    A_PLAN_END);
+const dExec  = arcPath(R, A_PLAN_END, A_EXEC_END);
+const dClose = arcPath(R, A_EXEC_END, A_CLOSE_END);
+const dInner = arcPath(R_INNER, A_PLAN_END, A_EXEC_END);
+
+// ── Key node positions ─────────────────────────────────────────────────────
+const [spx, spy] = pt(R, A_START);       // /sprint-plan
+const [scx, scy] = pt(R, A_EXEC_END);    // /sprint-close
+const chainDeg   = A_CLOSE_END - 1.5;    // 88.5° — just before A_START
+const [chx, chy] = pt(R, chainDeg);      // CHAIN?
+const DW = 13;                            // diamond half-width
+
+// ── Tripwires ──────────────────────────────────────────────────────────────
+const TRIPWIRES = [
+  { pct: 0.50, ariaLabel: '50% work-budget tripwire — check' },
+  { pct: 0.75, ariaLabel: '75% work-budget tripwire — warn' },
+  { pct: 0.90, ariaLabel: '90% work-budget tripwire — escalate' },
+  { pct: 1.00, ariaLabel: '100% work-budget tripwire — hard stop' },
+] as const;
+
+// ── Execution sub-state nodes ──────────────────────────────────────────────
+const SUB_STATES = [
+  { pct: 0.15, text1: 'story',   text2: 'pull'   },
+  { pct: 0.38, text1: 'board',   text2: 'mover'  },
+  { pct: 0.62, text1: 'standup', text2: 'append' },
+  { pct: 0.85, text1: 'qa',      text2: 'verify' },
+] as const;
+
+// ── Q0–Q4 planning gate markers ────────────────────────────────────────────
+const Q_GATES = [
+  { id: 'Q0', hint: 'skip if <24h'     },
+  { id: 'Q1', hint: 'SM recommendation'},
+  { id: 'Q2', hint: 'ship-if-room'     },
+  { id: 'Q3', hint: 'prior-sprint'     },
+  { id: 'Q4', hint: 'defer to retro'   },
+] as const;
+
+// ── Phase mid-point label positions ───────────────────────────────────────
+const phaseMid = (a: number, b: number) => a + (b - a) / 2;
+const [elmx, elmy] = pt(R_PHLBL,      phaseMid(A_PLAN_END, A_EXEC_END));
+const [plmx, plmy] = pt(R_PHLBL + 12, phaseMid(A_START,    A_PLAN_END));
+const [clmx, clmy] = pt(R_PHLBL + 12, phaseMid(A_EXEC_END, A_CLOSE_END));
+
+// ── Pre-compute tripwire positions ─────────────────────────────────────────
+const tripwireData = TRIPWIRES.map(({ pct, ariaLabel }) => {
+  const deg = A_PLAN_END + pct * P_EXEC * 360;
+  const [tx, ty] = pt(R_TRIP, deg);
+  const [lx, ly] = pt(R_TRIP - 19, deg);
+  return { pct, ariaLabel, tx, ty, lx, ly };
+});
+
+// ── Pre-compute sub-state node positions ───────────────────────────────────
+const subStateData = SUB_STATES.map(({ pct, text1, text2 }) => {
+  const deg = A_PLAN_END + pct * P_EXEC * 360;
+  const [nx, ny] = pt(R_INNER, deg);
+  const [ox, oy] = pt(R - SW / 2 - 1, deg);
+  return { text1, text2, nx, ny, ox, oy };
+});
+
+// ── Pre-compute Q-gate positions ───────────────────────────────────────────
+const gateData = Q_GATES.map(({ id, hint }, i) => {
+  const pct = (i + 0.5) / Q_GATES.length;
+  const deg = A_START + pct * P_PLAN * 360;
+  const [mx, my] = pt(R, deg);
+  const [lx, ly] = pt(R_GATE, deg);
+  return { id, hint, mx, my, lx, ly };
+});
+---
+
+<section class="s101-wrap" aria-label="Sprint loop radial diagram">
+  <figure>
+    <svg
+      id="s101-loop-svg"
+      viewBox="0 0 600 630"
+      preserveAspectRatio="xMidYMid meet"
+      role="graphics-document"
+      aria-labelledby="s101-loop-title"
+      style="width:100%;height:auto;display:block;overflow:visible;"
+    >
+      <title id="s101-loop-title">
+        Sprint loop — proportional radial: planning 7%, execution 80%, close 13% of circumference.
+        /sprint-plan at bottom-center; arcs run clockwise; CHAIN? decision closes the loop.
+      </title>
+
+      <defs>
+        <marker id="s101-arr" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+          <path d="M0,0 L7,3.5 L0,7 Z" fill="var(--accent)"/>
+        </marker>
+        <marker id="s101-arr-dim" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+          <path d="M0,0 L7,3.5 L0,7 Z" fill="var(--muted)"/>
+        </marker>
+      </defs>
+
+      <!-- Background track ring -->
+      <g id="g-track">
+        <circle
+          cx={CX} cy={CY} r={R}
+          fill="none"
+          stroke="var(--bg-elevated)"
+          stroke-width={SW + 10}
+          aria-hidden="true"
+        />
+      </g>
+
+      <!-- Phase arcs -->
+      <g id="g-arcs">
+        <!-- planning arc — accent solid -->
+        <path
+          id="s101-arc-plan"
+          d={dPlan}
+          fill="none"
+          stroke="var(--accent)"
+          stroke-width={SW}
+          stroke-linecap="butt"
+          class="s101-arc-draw"
+          aria-hidden="true"
+        />
+        <!-- execution arc — accent solid (visual dominance from size, not width) -->
+        <path
+          id="s101-arc-exec"
+          d={dExec}
+          fill="none"
+          stroke="var(--accent)"
+          stroke-width={SW}
+          stroke-linecap="butt"
+          class="s101-arc-draw"
+          aria-hidden="true"
+        />
+        <!-- close arc — accent-dim -->
+        <path
+          id="s101-arc-close"
+          d={dClose}
+          fill="none"
+          stroke="var(--accent-dim)"
+          stroke-width={SW}
+          stroke-linecap="butt"
+          class="s101-arc-draw"
+          aria-hidden="true"
+        />
+      </g>
+
+      <!-- Execution inner ring — dashed track + sub-state nodes + tripwires -->
+      <g id="g-inner">
+        <!-- dashed inner track -->
+        <path
+          d={dInner}
+          fill="none"
+          stroke="var(--border-strong)"
+          stroke-width="1"
+          stroke-dasharray="4 4"
+          aria-hidden="true"
+        />
+
+        <!-- Sub-state nodes -->
+        {subStateData.map(({ text1, text2, nx, ny, ox, oy }) => (
+          <>
+            <line
+              x1={f(nx)} y1={f(ny)} x2={f(ox)} y2={f(oy)}
+              stroke="var(--border-strong)" stroke-width="1"
+              aria-hidden="true"
+            />
+            <circle
+              cx={f(nx)} cy={f(ny)} r="14"
+              fill="var(--bg-panel)" stroke="var(--fg-dim)" stroke-width="1.5"
+              aria-hidden="true"
+            />
+            <text
+              x={f(nx)} y={f(ny - 4.5)}
+              fill="var(--fg-dim)" font-size="7.5"
+              text-anchor="middle" dominant-baseline="central"
+              font-family="var(--font-mono)" aria-hidden="true"
+            >{text1}</text>
+            <text
+              x={f(nx)} y={f(ny + 5.5)}
+              fill="var(--fg-dim)" font-size="7.5"
+              text-anchor="middle" dominant-baseline="central"
+              font-family="var(--font-mono)" aria-hidden="true"
+            >{text2}</text>
+          </>
+        ))}
+
+        <!-- Tripwire dots -->
+        {tripwireData.map(({ pct, ariaLabel, tx, ty, lx, ly }) => (
+          <>
+            <circle
+              cx={f(tx)} cy={f(ty)} r="5"
+              fill="var(--accent-dim)" stroke="var(--bg)" stroke-width="2"
+              aria-label={ariaLabel} role="img"
+            />
+            <text
+              x={f(lx)} y={f(ly)}
+              fill="var(--muted)" font-size="8"
+              text-anchor="middle" dominant-baseline="central"
+              font-family="var(--font-mono)" aria-hidden="true"
+            >{Math.round(pct * 100)}%</text>
+          </>
+        ))}
+      </g>
+
+      <!-- Q0–Q4 gate markers on planning arc (tight 25.2° window) -->
+      <g id="g-gates">
+        {gateData.map(({ id, hint, mx, my, lx, ly }) => (
+          <>
+            <!-- gate dot on arc -->
+            <circle
+              cx={f(mx)} cy={f(my)} r="3.5"
+              fill="var(--bg)" stroke="var(--accent)" stroke-width="1.5"
+              aria-hidden="true"
+            >
+              <title>{id}: {hint}</title>
+            </circle>
+            <!-- radial leader line -->
+            <line
+              x1={f(mx)} y1={f(my)} x2={f(lx)} y2={f(ly)}
+              stroke="var(--border)" stroke-width="0.8"
+              aria-hidden="true"
+            />
+            <!-- gate ID label -->
+            <text
+              x={f(lx)} y={f(ly - 5)}
+              fill="var(--fg-dim)" font-size="9"
+              text-anchor="middle" dominant-baseline="central"
+              font-family="var(--font-mono)" aria-hidden="true"
+            >{id}</text>
+            <!-- hint micro-text (decorative at small viewport — fallback via <title>) -->
+            <text
+              x={f(lx)} y={f(ly + 5)}
+              fill="var(--muted)" font-size="7"
+              text-anchor="middle" dominant-baseline="central"
+              font-family="var(--font-mono)" aria-hidden="true"
+            >{hint}</text>
+          </>
+        ))}
+      </g>
+
+      <!-- Key nodes: /sprint-plan, /sprint-close, CHAIN? -->
+      <g id="g-nodes">
+        <!-- /sprint-plan — filled accent dot at bottom of ring -->
+        <circle
+          cx={f(spx)} cy={f(spy)} r="9"
+          fill="var(--accent)" stroke="none"
+          aria-hidden="true"
+        />
+
+        <!-- /sprint-close — outlined rect at exec-end of ring -->
+        <rect
+          x={f(scx - 15)} y={f(scy - 8)} width="30" height="16"
+          fill="var(--bg-panel)" stroke="var(--accent-dim)" stroke-width="1.5"
+          aria-hidden="true"
+        />
+
+        <!-- CHAIN? — diamond 1.5° before A_START -->
+        <polygon
+          points={`${f(chx)},${f(chy - DW)} ${f(chx + DW)},${f(chy)} ${f(chx)},${f(chy + DW)} ${f(chx - DW)},${f(chy)}`}
+          fill="var(--bg)" stroke="var(--accent)" stroke-width="1.5"
+          aria-hidden="true"
+        />
+      </g>
+
+      <!-- Labels (all aria-hidden — content carried by ARIA fallback list) -->
+      <g id="g-labels" aria-hidden="true" font-family="var(--font-mono)">
+        <!-- /sprint-plan below node -->
+        <text x={CX} y={f(CY + R + 30)} fill="var(--accent)" font-size="11"
+          text-anchor="middle" dominant-baseline="central">/sprint-plan</text>
+
+        <!-- /sprint-close below node -->
+        <text x={f(scx + 2)} y={f(scy + 22)} fill="var(--accent-dim)" font-size="9"
+          text-anchor="middle" dominant-baseline="central">/sprint-close</text>
+
+        <!-- CHAIN? inside diamond -->
+        <text x={f(chx)} y={f(chy)} fill="var(--accent)" font-size="8"
+          text-anchor="middle" dominant-baseline="central">CHAIN?</text>
+
+        <!-- Phase arc names -->
+        <text x={f(elmx)} y={f(elmy)} fill="var(--accent)" font-size="11"
+          text-anchor="middle" dominant-baseline="central">EXECUTION</text>
+        <text x={f(elmx)} y={f(elmy + 13)} fill="var(--accent-dim)" font-size="8"
+          text-anchor="middle" dominant-baseline="central">60 min · WIP=2</text>
+
+        <text x={f(plmx)} y={f(plmy)} fill="var(--accent)" font-size="9"
+          text-anchor="middle" dominant-baseline="central">planning</text>
+
+        <text x={f(clmx)} y={f(clmy)} fill="var(--accent-dim)" font-size="9"
+          text-anchor="middle" dominant-baseline="central">close</text>
+
+        <!-- Center label -->
+        <text x={CX} y={f(CY - 8)} fill="var(--border-strong)" font-size="13"
+          text-anchor="middle" dominant-baseline="central">SPRINT LOOP</text>
+        <text x={CX} y={f(CY + 10)} fill="var(--border)" font-size="8.5"
+          text-anchor="middle" dominant-baseline="central">~75 min total</text>
+      </g>
+
+      <!-- Arrows -->
+      <g id="g-arrows">
+        <!-- "yes" arrow: CHAIN? → /sprint-plan (dashed, ~5px gap, both on ring) -->
+        <line
+          x1={f(chx + 6)} y1={f(chy - 3)}
+          x2={f(spx - 8)} y2={f(spy - 2)}
+          stroke="var(--accent)" stroke-width="1.5"
+          stroke-dasharray="3 3"
+          marker-end="url(#s101-arr)"
+          aria-hidden="true"
+        />
+        <text x={f(chx + 26)} y={f(chy - 18)} fill="var(--accent)" font-size="8"
+          text-anchor="middle" dominant-baseline="central"
+          font-family="var(--font-mono)" aria-hidden="true">yes</text>
+
+        <!-- "no" arrow pointing outward (done) -->
+        <line
+          x1={f(chx)} y1={f(chy + DW + 3)}
+          x2={f(chx - 35)} y2={f(chy + 45)}
+          stroke="var(--muted)" stroke-width="1.2"
+          marker-end="url(#s101-arr-dim)"
+          aria-hidden="true"
+        />
+        <text x={f(chx - 50)} y={f(chy + 54)} fill="var(--muted)" font-size="8"
+          text-anchor="middle" dominant-baseline="central"
+          font-family="var(--font-mono)" aria-hidden="true">no → done</text>
+      </g>
+    </svg>
+
+    <!-- ARIA fallback: linear reading order (S101 bullet 7) -->
+    <ol class="s101-fallback-list" aria-label="Sprint loop in linear reading order">
+      <li>/sprint-plan — start of planning phase</li>
+      <li>Q0: staleness? (default: skip if under 24 h)</li>
+      <li>Q1: budget % (default: SM recommendation)</li>
+      <li>Q2: source split (default: ship-if-room)</li>
+      <li>Q3: story basket (default: prior-sprint precedent)</li>
+      <li>Q4: improvement (default: defer to retro pile)</li>
+      <li>confirm — human PM approves plan</li>
+      <li>EXECUTION — 60 min window, WIP=2</li>
+      <li>story-pull — pull top story from ready basket</li>
+      <li>board-mover — move card In Progress → Review</li>
+      <li>standup-append — append standup line to PMO ceremonies</li>
+      <li>qa-verify — spawn qa-verifier sub-agent</li>
+      <li>tripwire at 50% work-budget — check / continue</li>
+      <li>tripwire at 75% work-budget — warn</li>
+      <li>tripwire at 90% work-budget — escalate</li>
+      <li>tripwire at 100% work-budget — hard stop</li>
+      <li>/sprint-close — start of close phase</li>
+      <li>compute actuals — token and time deltas</li>
+      <li>write Demo dashboard — public board snapshot</li>
+      <li>retro proposal — 4-agent parallel analysis</li>
+      <li>decision sweep — PM reviews retro output</li>
+      <li>CHAIN? — yes: loop back to /sprint-plan · no: done</li>
+    </ol>
+  </figure>
+
+  <!-- Legend (S101 bullet 5: every shape category present in body) -->
+  <div class="s101-legend" aria-label="Diagram legend">
+    <div class="s101-leg">
+      <span class="s101-sw" style="background:var(--accent);"></span>
+      execution (80%)
+    </div>
+    <div class="s101-leg">
+      <span class="s101-sw" style="background:none;outline:2px solid var(--accent);outline-offset:-1px;"></span>
+      planning (7%)
+    </div>
+    <div class="s101-leg">
+      <span class="s101-sw" style="background:none;outline:2px solid var(--accent-dim);outline-offset:-1px;"></span>
+      close (13%)
+    </div>
+    <div class="s101-leg">
+      <span class="s101-sw" style="border-radius:50%;background:var(--fg-dim);"></span>
+      sub-state node
+    </div>
+    <div class="s101-leg">
+      <span class="s101-sw" style="border-radius:50%;background:var(--accent-dim);"></span>
+      tripwire dot (50/75/90/100%)
+    </div>
+    <div class="s101-leg">
+      <span class="s101-sw" style="border-radius:50%;background:none;outline:2px solid var(--accent);outline-offset:-1px;"></span>
+      Q-gate marker
+    </div>
+  </div>
+</section>
+
+<style>
+  .s101-wrap {
+    width: 100%;
+  }
+
+  figure {
+    display: block;
+    position: relative;
+  }
+
+  /* ARIA fallback — visually hidden, screen-reader accessible */
+  .s101-fallback-list {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+  }
+
+  /* Legend */
+  .s101-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem 1.25rem;
+    margin-top: 1rem;
+    font-size: var(--size-sm);
+    color: var(--fg-dim);
+  }
+
+  .s101-leg {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  .s101-sw {
+    width: 12px;
+    height: 12px;
+    display: inline-block;
+    flex-shrink: 0;
+  }
+
+  /* Draw-in animation — arcs start invisible, draw over 0.8s */
+  @media (prefers-reduced-motion: no-preference) {
+    .s101-arc-draw {
+      animation: s101-draw-in 0.8s ease-out forwards;
+    }
+    #s101-arc-exec.s101-arc-draw  { animation-delay: 0.05s; }
+    #s101-arc-close.s101-arc-draw { animation-delay: 0.25s; }
+
+    @keyframes s101-draw-in {
+      to { stroke-dashoffset: 0; }
+    }
+  }
+
+  /* Mobile: proportional shrink via viewBox — no overflow by construction */
+  @media (max-width: 430px) {
+    .s101-wrap { padding: 0; }
+  }
+</style>
+
+<!-- Set stroke-dasharray/dashoffset from JS (dynamic getTotalLength() per scope-rec gotcha) -->
+<script is:inline>
+(function () {
+  'use strict';
+  const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function initArc(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const len = el.getTotalLength();
+    el.style.strokeDasharray = len + ' ' + len;
+    if (prefersReduced) {
+      el.style.strokeDashoffset = '0';
+    } else {
+      el.style.strokeDashoffset = String(len);
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function () {
+      initArc('s101-arc-plan');
+      initArc('s101-arc-exec');
+      initArc('s101-arc-close');
+    });
+  } else {
+    initArc('s101-arc-plan');
+    initArc('s101-arc-exec');
+    initArc('s101-arc-close');
+  }
+})();
+</script>

@@ -1,105 +1,479 @@
 ---
 export const prerender = true;
 /**
- * Public CV view — S008.
+ * Public CV view — S078 V1 Skimmer redesign.
  *
- * Renders the 6 headline stat cards on `/`:
- *   TOKENS · SUBSCRIPTION · PROJECTS · SKILLS · AGENTS · MCP SERVERS
+ * Layout: hero (~60%) + AT A GLANCE (~40%) top row,
+ * then 4 secondary cards (SUBSCRIPTION · PROJECTS · SKILLS · MCP SERVERS),
+ * then SCROLL · DETAIL divider, then chart section.
  *
- * Numbers are imported from `data/snapshots/public.json` at build time.
- * No client-side fetch. If the file is missing, Astro fails the build
- * with a clear ENOENT — which is exactly what we want on a fresh
- * checkout that hasn't run `bun run pipeline` yet.
+ * Hero billable basis: total_tokens (in+out). Sparkline = last-7-day
+ * daily[].in_tokens + daily[].out_tokens. See S078 spec-gate amendment.
  */
 import TerminalLayout from '../layouts/TerminalLayout.astro';
+import HeroCard from '../components/HeroCard.astro';
 import StatCard from '../components/StatCard.astro';
-import QuotaCard from '../components/QuotaCard.astro';
+import WorkShareCard from '../components/WorkShareCard.astro';
 import ModelSplitChart from '../components/ModelSplitChart.astro';
 import ProjectSplitChart from '../components/ProjectSplitChart.astro';
 import UsageChart from '../components/UsageChart.astro';
 import ActivityHeatmap from '../components/ActivityHeatmap.astro';
-import { formatTokens, formatInt, formatCurrency } from '../lib/format.ts';
+import UsageByModelChart from '../components/UsageByModelChart.astro';
+import { formatInt, formatCurrency, formatTokens } from '../lib/format.ts';
 import snapshot from '../../data/snapshots/public.json';
 
-const tokens = snapshot.totals.total_tokens;
+// ── Hero numerals (billable basis: in+out, NOT cache-inclusive) ──────────────
+const totalTokens = snapshot.totals.total_tokens;
+const tokens7dAgo = snapshot.totals.tokens_7d_ago;
+const heroM = (totalTokens / 1e6).toFixed(1) + 'M';
+const rawDelta = ((totalTokens - tokens7dAgo) / tokens7dAgo) * 100;
+const deltaSign = rawDelta >= 0 ? '+' : '';
+const deltaLine = `${deltaSign}${rawDelta.toFixed(1)}% vs prior 7d`;
+const deltaDir: 'up' | 'down' | 'flat' =
+  rawDelta > 0 ? 'up' : rawDelta < 0 ? 'down' : 'flat';
+
+// ── Sparkline (S078 amendment: billable = in+out per day, last 7) ────────────
+type DailyRow = { date: string; tokens: number; in_tokens: number; out_tokens: number };
+const last7 = (snapshot.daily as DailyRow[]).slice(-7);
+const billable = last7.map(d => d.in_tokens + d.out_tokens);
+const VBOX_W = 120, VBOX_H = 32, PAD = 4;
+const bMin = Math.min(...billable);
+const bMax = Math.max(...billable);
+const bRange = bMax - bMin || 1;
+const sparkPoints: [number, number][] = billable.map((v, i) => [
+  parseFloat((PAD + (i / (billable.length - 1)) * (VBOX_W - 2 * PAD)).toFixed(1)),
+  parseFloat(((VBOX_H - PAD) - ((v - bMin) / bRange) * (VBOX_H - 2 * PAD)).toFixed(1)),
+]);
+const sparkAriaLabel = `7-day billable tokens: ${billable.map(v => (v / 1e6).toFixed(2) + 'M').join(', ')}`;
+
+// ── AT A GLANCE panel data ────────────────────────────────────────────────────
+const { agents, projects, skills, mcp_servers, counts_trend_7d, top_skills, top_mcp_servers } =
+  snapshot.counts as any;
+const payingSince: string =
+  (snapshot.totals as any).paying_since ?? (snapshot.totals as any).current_plan_since;
+const trend7d = counts_trend_7d ?? null;
+
+// ── SUBSCRIPTION secondary card ───────────────────────────────────────────────
 const subscriptionTotal = snapshot.totals.total_subscription;
 const subscriptionCurrency = snapshot.totals.subscription_currency;
 const currentPlan = snapshot.totals.current_plan;
 const currentPlanSince = snapshot.totals.current_plan_since;
-const payingSince = snapshot.totals.paying_since ?? currentPlanSince;
-const weeklyQuotaPct = snapshot.totals.weekly_quota_pct as number;
-const currentSessionPct = snapshot.totals.current_session_pct as number;
-const { projects, skills, agents, mcp_servers, counts_trend_7d, top_skills, top_agents, top_mcp_servers } = snapshot.counts as any;
-// S025: extract per-entity sparkline arrays; null-safe (may be absent on old snapshots).
-const trend7d = (counts_trend_7d as any) ?? null;
 
-/**
- * Compute a 7d-vs-prior-7d delta on a numeric daily series.
- * Returns a signed percent string like "+18%" or "-4%", or undefined
- * when there isn't enough data to be honest about it.
- */
-function weekDelta(rows: { tokens: number; usd: number }[], key: 'tokens' | 'usd'): string | undefined {
-  if (!rows || rows.length < 14) return undefined;
-  const tail = rows.slice(-14);
-  const prior = tail.slice(0, 7).reduce((s, r) => s + (r[key] ?? 0), 0);
-  const recent = tail.slice(7).reduce((s, r) => s + (r[key] ?? 0), 0);
-  if (prior === 0) return undefined;
-  const pct = ((recent - prior) / prior) * 100;
-  const sign = pct >= 0 ? '+' : '';
-  return `${sign}${pct.toFixed(0)}%`;
-}
+// ── S118 build-bucket work share (still used for StatCard context line) ──────────
+const buildBucket = (snapshot as any).work_share_by_project_dir?.['-AgenticOS'] ?? {};
+const buildAgents = buildBucket.agents_tokens_share ?? 0;
 
-const tokensDelta = weekDelta(snapshot.daily as { tokens: number; usd: number }[], 'tokens');
+// ── S148 windowed work-share for WorkShareCard toggle ────────────────────────────
+const snap148 = snapshot as any;
+const ws7d = {
+  manual: snap148.work_share_7d?.manual_tokens_share ?? 0,
+  agents: snap148.work_share_7d?.agents_tokens_share ?? 0,
+  skills: snap148.work_share_7d?.skills_tokens_share ?? 0,
+  mcp:    snap148.work_share_7d?.mcp_tokens_share ?? 0,
+};
+const ws30d = {
+  manual: snap148.work_share_30d?.manual_tokens_share ?? 0,
+  agents: snap148.work_share_30d?.agents_tokens_share ?? 0,
+  skills: snap148.work_share_30d?.skills_tokens_share ?? 0,
+  mcp:    snap148.work_share_30d?.mcp_tokens_share ?? 0,
+};
+const wsAll = {
+  manual: snap148.work_share_all?.manual_tokens_share ?? 0,
+  agents: snap148.work_share_all?.agents_tokens_share ?? 0,
+  skills: snap148.work_share_all?.skills_tokens_share ?? 0,
+  mcp:    snap148.work_share_all?.mcp_tokens_share ?? 0,
+};
+
+// ── S038 windowed totals for toggle stat display ──────────────────────────────
+const snap38 = snapshot as any;
+const t7d  = snap38.totals_7d  ?? null;
+const t30d = snap38.totals_30d ?? null;
 ---
 <TerminalLayout title="AGENTICOS — /">
-  <main id="main-content" class="stats" aria-label="Headline stats">
-    <StatCard label="TOKENS" value={formatTokens(tokens)} delta={tokensDelta} unit="tok" />
-    <QuotaCard weeklyPct={weeklyQuotaPct} sessionPct={currentSessionPct} subscriptionTotal={subscriptionTotal} subscriptionCurrency={subscriptionCurrency} currentPlan={currentPlan} payingSince={payingSince} />
-    <StatCard label="PROJECTS" value={formatInt(projects)} trend={trend7d?.projects ?? undefined} />
-    <StatCard label="SKILLS" value={formatInt(skills)} trend={trend7d?.skills ?? undefined} topNames={top_skills} />
-    <StatCard label="AGENTS" value={formatInt(agents)} trend={trend7d?.agents ?? undefined} topNames={top_agents} />
-    <StatCard label="MCP SERVERS" value={formatInt(mcp_servers)} unit="MCP" trend={trend7d?.mcp_servers ?? undefined} topNames={top_mcp_servers} />
+  <main id="main-content" aria-label="Headline stats">
+
+    <!-- V1 Skimmer top row: hero 60% · AT A GLANCE 40% -->
+    <div class="v1-top">
+      <HeroCard
+        totalTokensM={heroM}
+        deltaLine={deltaLine}
+        deltaDir={deltaDir}
+        sparkPoints={sparkPoints}
+        sparkAriaLabel={sparkAriaLabel}
+      />
+
+      <aside class="glance-panel" aria-label="At a glance">
+        <span class="bracket bracket-tl" aria-hidden="true"></span>
+        <span class="bracket bracket-tr" aria-hidden="true"></span>
+        <span class="bracket bracket-bl" aria-hidden="true"></span>
+        <span class="bracket bracket-br" aria-hidden="true"></span>
+
+        <div class="glance-label">◆ AT A GLANCE</div>
+
+        <div class="glance-agents">
+          <span class="glance-agents-val">{formatInt(agents)}</span>
+          <span class="glance-agents-unit">agents</span>
+        </div>
+
+        <div class="glance-meta">Building since {payingSince}</div>
+
+        <div class="glance-status">
+          <span class="pulse" aria-hidden="true"></span>
+          <span>status: <strong>shipping</strong></span>
+        </div>
+      </aside>
+    </div>
+
+    <!-- 4 secondary cards: SUBSCRIPTION · PROJECTS · SKILLS · MCP SERVERS -->
+    <div class="v1-secondary" aria-label="Secondary stats">
+      <StatCard
+        label="SUBSCRIPTION"
+        value={formatCurrency(subscriptionTotal, subscriptionCurrency)}
+        context={`${currentPlan.toUpperCase()} · since ${currentPlanSince}`}
+      />
+      <StatCard
+        label="PROJECTS"
+        value={formatInt(projects)}
+        trend={trend7d?.projects ?? undefined}
+      />
+      <StatCard
+        label="SKILLS"
+        value={formatInt(skills)}
+        trend={trend7d?.skills ?? undefined}
+        topNames={top_skills}
+        context={`${wsAll.skills.toFixed(2)}% of build tokens`}
+      />
+      <StatCard
+        label="MCP SERVERS"
+        value={formatInt(mcp_servers)}
+        unit="MCP"
+        trend={trend7d?.mcp_servers ?? undefined}
+        topNames={top_mcp_servers}
+      />
+    </div>
+
+    <!-- S118 work-share card + agents card row -->
+    <div class="v1-work-share" aria-label="Work share and agents">
+      <WorkShareCard
+        ws7d={ws7d}
+        ws30d={ws30d}
+        wsAll={wsAll}
+        daily={snapshot.daily as any}
+      />
+      <StatCard
+        label="AGENTS"
+        value={formatInt(agents)}
+        context={`${buildAgents.toFixed(1)}% of build tokens`}
+      />
+    </div>
+
   </main>
 
-  <section class="heatmap-wrap" aria-label="Activity heatmap">
-    <ActivityHeatmap />
-  </section>
+  <!-- SCROLL · DETAIL divider -->
+  <div class="detail-divider" role="separator" aria-label="Detailed charts section">
+    <span>SCROLL</span>
+    <span class="divider-dot">·</span>
+    <span>DETAIL</span>
+  </div>
+
+  <div class="activity-usage-row">
+    <section aria-label="Activity heatmap">
+      <ActivityHeatmap />
+    </section>
+    <section aria-label="30-day usage">
+      <UsageChart />
+    </section>
+  </div>
 
   <section class="split-row" aria-label="Project + model split">
     <ProjectSplitChart />
-    <ModelSplitChart />
+
+    <!-- S038: CSS-only window toggle. Radios must precede panels as siblings. -->
+    <div class="win-area">
+      <input type="radio" id="w-all" name="window" checked class="win-radio">
+      <input type="radio" id="w-7d"  name="window"         class="win-radio">
+      <input type="radio" id="w-30d" name="window"         class="win-radio">
+
+      <div class="win-toggle" role="group" aria-label="Token time window">
+        <label for="w-all" class="win-tab">All</label>
+        <label for="w-7d"  class="win-tab">7d</label>
+        <label for="w-30d" class="win-tab">30d</label>
+      </div>
+
+      <div class="win-panel win-panel-all">
+        <p class="win-stat" aria-label="All time tokens">
+          <span class="win-stat-val">{formatTokens(snapshot.totals.total_tokens)}</span>
+          <span class="win-stat-lbl">total tok · {snapshot.totals.message_count.toLocaleString()} msgs</span>
+        </p>
+        <ModelSplitChart window="all" />
+      </div>
+
+      <div class="win-panel win-panel-7d">
+        {t7d && <p class="win-stat" aria-label="7 day tokens">
+          <span class="win-stat-val">{formatTokens(t7d.total_tokens)}</span>
+          <span class="win-stat-lbl">7d tok · {t7d.message_count.toLocaleString()} msgs</span>
+        </p>}
+        <ModelSplitChart window="7d" />
+      </div>
+
+      <div class="win-panel win-panel-30d">
+        {t30d && <p class="win-stat" aria-label="30 day tokens">
+          <span class="win-stat-val">{formatTokens(t30d.total_tokens)}</span>
+          <span class="win-stat-lbl">30d tok · {t30d.message_count.toLocaleString()} msgs</span>
+        </p>}
+        <ModelSplitChart window="30d" />
+      </div>
+    </div>
   </section>
 
-  <section class="usage-wrap" aria-label="30-day usage">
-    <UsageChart />
+  <section class="ubm-row" aria-label="Token usage by model over time">
+    <UsageByModelChart />
   </section>
 
   <style>
-    .stats {
+    /* ── V1 Skimmer top row ──────────────────────────────────────────── */
+    .v1-top {
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: 3fr 2fr;   /* 60% hero / 40% AT A GLANCE */
       gap: var(--grid-gutter);
     }
-    @media (max-width: 960px) {
-      .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+    /* AT A GLANCE panel */
+    .glance-panel {
+      position: relative;
+      border: 1px solid var(--border);
+      background: var(--bg-panel);
+      padding: var(--space-5);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: var(--space-3);
+      transition: background var(--motion-fast) var(--easing);
     }
-    @media (max-width: 640px) {
-      .stats { grid-template-columns: 1fr; }
+    .glance-panel:hover { background: var(--bg-elevated); }
+
+    @media (prefers-reduced-motion: reduce) {
+      .glance-panel { transition: none; }
     }
+
+    .bracket {
+      position: absolute;
+      width: 10px;
+      height: 10px;
+      border: 1px solid var(--accent);
+    }
+    .bracket-tl { top: -1px; left: -1px; border-right: 0; border-bottom: 0; }
+    .bracket-tr { top: -1px; right: -1px; border-left: 0; border-bottom: 0; }
+    .bracket-bl { bottom: -1px; left: -1px; border-right: 0; border-top: 0; }
+    .bracket-br { bottom: -1px; right: -1px; border-left: 0; border-top: 0; }
+
+    .glance-label {
+      font-size: var(--size-sm);
+      color: var(--fg-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+    }
+
+    .glance-agents {
+      display: flex;
+      align-items: baseline;
+      gap: var(--space-2);
+    }
+    .glance-agents-val {
+      font-family: var(--font-display);
+      font-size: var(--size-xl);
+      color: var(--accent);
+    }
+    .glance-agents-unit {
+      font-size: var(--size-sm);
+      color: var(--fg-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .glance-meta {
+      font-size: var(--size-sm);
+      color: var(--fg-dim);
+      letter-spacing: 0.02em;
+    }
+
+    .glance-status {
+      font-size: var(--size-sm);
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+    }
+    .glance-status strong { color: var(--accent); }
+
+    .pulse {
+      display: inline-block;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--accent);
+      flex-shrink: 0;
+    }
+    @media (prefers-reduced-motion: no-preference) {
+      .pulse {
+        animation: pulse-ring 1.8s ease-in-out infinite;
+      }
+    }
+
+    /* ── 4 secondary cards ───────────────────────────────────────────── */
+    .v1-secondary {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: var(--grid-gutter);
+      margin-top: var(--grid-gutter);
+    }
+
+    /* ── S118 work-share row: 3fr work-share + 1fr agents ───────────── */
+    .v1-work-share {
+      display: grid;
+      grid-template-columns: 3fr 1fr;
+      gap: var(--grid-gutter);
+      margin-top: var(--grid-gutter);
+    }
+
+    /* ── SCROLL · DETAIL divider ─────────────────────────────────────── */
+    .detail-divider {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: var(--space-3);
+      margin: var(--space-6) 0 var(--space-5);
+      font-size: var(--size-sm);
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.16em;
+    }
+    .detail-divider::before,
+    .detail-divider::after {
+      content: '';
+      flex: 1;
+      border-top: 1px dotted var(--border-strong);
+    }
+    .divider-dot { color: var(--accent); }
+
+    /* ── Charts section ──────────────────────────────────────────────── */
     .split-row {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: var(--grid-gutter);
       margin-top: var(--grid-gutter);
     }
-    @media (max-width: 960px) {
-      .split-row { grid-template-columns: 1fr; }
-    }
-    .usage-wrap {
+    .activity-usage-row {
+      display: grid;
+      grid-template-columns: 3fr 2fr;
+      gap: var(--grid-gutter);
       margin-top: var(--grid-gutter);
     }
-    .heatmap-wrap {
+
+    /* ── Usage by model row ─────────────────────────────────────────── */
+    .ubm-row {
       margin-top: var(--grid-gutter);
+    }
+
+    /* ── S038 window toggle (CSS-only) ──────────────────────────────── */
+    .win-area {
+      display: flex;
+      flex-direction: column;
+    }
+    /* Visually hidden but keyboard-focusable */
+    .win-radio {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      margin: -1px;
+      padding: 0;
+      border: 0;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      white-space: nowrap;
+    }
+    .win-toggle {
+      display: flex;
+      gap: 0;
+      margin-bottom: var(--space-3);
+      border: 1px solid var(--border);
+      width: fit-content;
+    }
+    .win-tab {
+      display: inline-block;
+      padding: var(--space-1) var(--space-4);
+      font-family: var(--font-mono);
+      font-size: var(--size-sm);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--fg-dim);
+      cursor: pointer;
+      border-right: 1px solid var(--border);
+      transition: color var(--motion-fast) var(--easing), background var(--motion-fast) var(--easing);
+    }
+    .win-tab:last-child { border-right: 0; }
+    .win-tab:hover { color: var(--fg); background: var(--bg-elevated); }
+    @media (prefers-reduced-motion: reduce) {
+      .win-tab { transition: none; }
+    }
+
+    /* Active tab state via :checked sibling */
+    #w-all:checked  ~ .win-toggle label[for="w-all"],
+    #w-7d:checked   ~ .win-toggle label[for="w-7d"],
+    #w-30d:checked  ~ .win-toggle label[for="w-30d"] {
+      color: var(--accent);
+      background: var(--bg-elevated);
+    }
+
+    /* Focus ring on the label when the corresponding radio is keyboard-focused */
+    #w-all:focus-visible  ~ .win-toggle label[for="w-all"],
+    #w-7d:focus-visible   ~ .win-toggle label[for="w-7d"],
+    #w-30d:focus-visible  ~ .win-toggle label[for="w-30d"] {
+      outline: 2px solid var(--accent);
+      outline-offset: -2px;
+    }
+
+    /* Panel show/hide — default hidden; only the active panel shows */
+    .win-panel { display: none; }
+    #w-all:checked  ~ .win-panel-all  { display: block; }
+    #w-7d:checked   ~ .win-panel-7d   { display: block; }
+    #w-30d:checked  ~ .win-panel-30d  { display: block; }
+
+    /* Windowed stat above the chart */
+    .win-stat {
+      margin: 0 0 var(--space-3) 0;
+      display: flex;
+      align-items: baseline;
+      gap: var(--space-2);
+    }
+    .win-stat-val {
+      font-family: var(--font-mono);
+      font-size: var(--size-md);
+      color: var(--fg);
+      font-weight: 600;
+    }
+    .win-stat-lbl {
+      font-size: var(--size-sm);
+      color: var(--fg-dim);
+      letter-spacing: 0.04em;
+    }
+
+    /* ── Keyframes ───────────────────────────────────────────────────── */
+    @keyframes pulse-ring {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(255, 106, 0, 0.4); }
+      50%       { box-shadow: 0 0 0 5px rgba(255, 106, 0, 0); }
+    }
+
+    /* ── Responsive breakpoints ──────────────────────────────────────── */
+    @media (max-width: 1024px) {
+      .v1-top              { grid-template-columns: 1fr; }
+      .v1-secondary        { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .v1-work-share       { grid-template-columns: 1fr; }
+      .split-row           { grid-template-columns: 1fr; }
+      .activity-usage-row  { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 640px) {
+      .v1-secondary        { grid-template-columns: 1fr; }
+      .v1-work-share       { grid-template-columns: 1fr; }
     }
   </style>
 </TerminalLayout>

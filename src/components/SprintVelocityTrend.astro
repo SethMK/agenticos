@@ -34,6 +34,7 @@ interface ClosedSprint {
   sprint_id: string;
   actual_work_tokens_k: number;
   actual_overhead_tokens_k: number;
+  actual_retro_impl_tokens_k?: number | null;
   actual_total_tokens_k: number;
   planned_work_budget_k: number;
   planned_overhead_budget_k: number;
@@ -69,7 +70,10 @@ const sprints = closed_sprints.map(s => {
 });
 
 // ── Y-axis range ──────────────────────────────────────────────────────────
-const rawMaxK = sprints.reduce((m, s) => Math.max(m, s.actual_total_tokens_k), 0);
+const rawMaxK = sprints.reduce((m, s) => Math.max(m,
+  s.actual_total_tokens_k ?? 0,
+  (s.actual_work_tokens_k ?? 0) + (s.actual_overhead_tokens_k ?? 0) + (s.actual_retro_impl_tokens_k ?? 0)
+), 0);
 const Y_MAX_K = rawMaxK > 0 ? rawMaxK * 1.15 : 400;
 
 // ── SVG geometry ──────────────────────────────────────────────────────────
@@ -115,21 +119,29 @@ function fmtK(k: number): string {
 // ── Bar segments ──────────────────────────────────────────────────────────
 const bars = sprints.map((s, i) => {
   const x = xBar(i);
-  const workTopY = yK(s.actual_work_tokens_k);
+  const workK = s.actual_work_tokens_k ?? 0;
+  const overheadK = s.actual_overhead_tokens_k ?? 0;
+  const retroImplK = s.actual_retro_impl_tokens_k ?? 0;
+  const workTopY = yK(workK);
   const workH = yK(0) - workTopY;
-  const totalTopY = yK(s.actual_total_tokens_k);
-  const overheadH = workTopY - totalTopY;
+  const overheadTopY = yK(workK + overheadK);
+  const overheadH = workTopY - overheadTopY;
+  const retroImplTopY = yK(workK + overheadK + retroImplK);
+  const retroImplH = overheadTopY - retroImplTopY;
   return {
     sprint_id: s.sprint_id,
     x,
     workY: workTopY,
     workH,
-    overheadY: totalTopY,
+    overheadY: overheadTopY,
     overheadH,
-    totalTopY,
-    actual_total: s.actual_total_tokens_k,
-    actual_work: s.actual_work_tokens_k,
-    actual_overhead: s.actual_overhead_tokens_k,
+    retroImplY: retroImplTopY,
+    retroImplH,
+    totalTopY: retroImplTopY,
+    actual_total: s.actual_total_tokens_k ?? 0,
+    actual_work: workK,
+    actual_overhead: overheadK,
+    actual_retro_impl: retroImplK,
     planned_total: s.planned_total_budget_k,
     ratio: s.ratio,
     isOutlier: s.isOutlier,
@@ -204,7 +216,7 @@ const yTickLabelX = PAD_LEFT + 2;
                 >
                   <title>{b.sprint_id} — work {fmtK(b.actual_work)}</title>
                 </rect>
-                {/* Overhead segment (top) */}
+                {/* Overhead segment (middle) */}
                 {b.overheadH > 0 && (
                   <rect
                     class="seg-overhead"
@@ -214,6 +226,18 @@ const yTickLabelX = PAD_LEFT + 2;
                     height={b.overheadH}
                   >
                     <title>{b.sprint_id} — overhead {fmtK(b.actual_overhead)} / total {fmtK(b.actual_total)} vs planned {fmtK(b.planned_total)} (ratio {b.ratio.toFixed(2)}×)</title>
+                  </rect>
+                )}
+                {/* retro-impl segment (top) */}
+                {b.retroImplH > 0 && (
+                  <rect
+                    class="seg-retro-impl"
+                    x={b.x}
+                    y={b.retroImplY}
+                    width={barW}
+                    height={b.retroImplH}
+                  >
+                    <title>{b.sprint_id} — retro-impl {fmtK(b.actual_retro_impl)}</title>
                   </rect>
                 )}
                 {/* Outlier ↑ glyph */}
@@ -295,6 +319,10 @@ const yTickLabelX = PAD_LEFT + 2;
         overhead
       </span>
       <span class="legend-item">
+        <span class="legend-swatch legend-retro-impl"></span>
+        retro-impl
+      </span>
+      <span class="legend-item">
         <span class="legend-swatch legend-median"></span>
         plan-vs-actual overhead (median {fmtK(medianOverheadK)})
       </span>
@@ -307,7 +335,7 @@ const yTickLabelX = PAD_LEFT + 2;
 
   <p class="chart-caption">
     {hasSprints
-      ? `${n} closed sprint${n === 1 ? '' : 's'} · velocity trend (work + overhead, stacked) · median overhead ${fmtK(medianOverheadK)}`
+      ? `${n} closed sprint${n === 1 ? '' : 's'} · velocity trend (work + overhead + retro-impl, stacked) · median overhead ${fmtK(medianOverheadK)}`
       : 'velocity trend across closed sprints · awaiting first sprint close'}
   </p>
 </section>
@@ -391,6 +419,15 @@ const yTickLabelX = PAD_LEFT + 2;
   }
   .seg-overhead:hover { opacity: 0.8; }
 
+  .seg-retro-impl {
+    fill: var(--accent);
+    opacity: 0.5;
+    @media (prefers-reduced-motion: no-preference) {
+      transition: opacity var(--motion-fast) var(--easing);
+    }
+  }
+  .seg-retro-impl:hover { opacity: 0.7; }
+
   .median-line {
     stroke: var(--fg-dim);
     stroke-width: 1.5;
@@ -442,6 +479,7 @@ const yTickLabelX = PAD_LEFT + 2;
   }
   .legend-work     { background: var(--accent); }
   .legend-overhead { background: var(--accent-dim); }
+  .legend-retro-impl { background: var(--accent); opacity: 0.5; }
   .legend-median {
     background: transparent;
     border-bottom: 2px dashed var(--fg-dim);

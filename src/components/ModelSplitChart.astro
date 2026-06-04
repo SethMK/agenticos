@@ -42,15 +42,28 @@
 import { formatTokens, shortModelName } from '../lib/format.ts';
 import snapshot from '../../data/snapshots/public.json';
 
+interface Props {
+  window?: 'all' | '7d' | '30d';
+}
+const { window: win = 'all' } = Astro.props;
+
 interface ModelRow {
   model: string;
   tokens: number;
+  tokens_input?: number;
+  tokens_output?: number;
   usd: number;
   rows?: number;
 }
 
+const snap = snapshot as any;
+const rawModels: ModelRow[] =
+  win === '7d' ? (snap.models_7d ?? snap.models) :
+  win === '30d' ? (snap.models_30d ?? snap.models) :
+  snap.models ?? [];
+
 // Order by token-share desc so the bar reads big-to-small left-to-right.
-const models: ModelRow[] = [...((snapshot as { models?: ModelRow[] }).models ?? [])]
+const models: ModelRow[] = [...rawModels]
   .filter((m) => Number.isFinite(m.tokens) && m.tokens > 0)
   .sort((a, b) => b.tokens - a.tokens);
 
@@ -74,6 +87,8 @@ const segments = models.map((m) => {
     id: m.model,
     short: shortModelName(m.model),
     tokens: m.tokens,
+    tokensIn: m.tokens_input ?? 0,
+    tokensOut: m.tokens_output ?? 0,
     usd: m.usd,
     sharePct,
     colour: colourFor(m.model),
@@ -114,6 +129,9 @@ const segments = models.map((m) => {
           <span class="name">{s.short}</span>
           <span class="pct">{s.sharePct.toFixed(1)}%</span>
           <span class="tok">{formatTokens(s.tokens)}</span>
+          {(s.tokensIn > 0 || s.tokensOut > 0) && (
+            <span class="in-out">In: {formatTokens(s.tokensIn)} · Out: {formatTokens(s.tokensOut)}</span>
+          )}
         </li>
       ))
     }
@@ -208,6 +226,14 @@ const segments = models.map((m) => {
   }
   .row:last-child {
     border-bottom: 0;
+  }
+  .in-out {
+    grid-column: 2 / -1;
+    color: var(--fg-dim);
+    font-size: 0.78em;
+    opacity: 0.75;
+    letter-spacing: 0.04em;
+    padding-bottom: var(--space-1);
   }
   .swatch {
     width: 10px;

@@ -1,5 +1,27 @@
 {
   "worktree": {
     "baseRef": "fresh"
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"/Users/marcinkokott/Projects/personal/202605_AgenticOS/.claude/hooks/stop-cross-window-qa.sh\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"/Users/marcinkokott/Projects/personal/202605_AgenticOS/.claude/hooks/stop-public-json-schema.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
   }
 }

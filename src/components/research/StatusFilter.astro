@@ -1,0 +1,81 @@
+---
+interface Group {
+  id: string;
+  title: string;
+  blurb?: string;
+}
+interface Props {
+  groups: Group[];
+}
+const { groups } = Astro.props;
+---
+
+<div class="filter-panel">
+  <div class="fset">
+    <h3 class="filter-label">state</h3>
+    <div class="tog-row" id="fstate">
+      <button class="tog" data-filter-state="validated" aria-pressed="true">validated</button>
+      <button class="tog" data-filter-state="watching" aria-pressed="true">watching</button>
+      <button class="tog" data-filter-state="backlog" aria-pressed="true">backlog</button>
+    </div>
+  </div>
+  <div class="fset">
+    <h3 class="filter-label">group</h3>
+    <div class="tog-row" id="fgroup">
+      {groups.map(g => (
+        <button
+          class="tog"
+          data-filter-group={g.id}
+          aria-pressed="false"
+          title={g.title}
+        >{g.id}</button>
+      ))}
+    </div>
+  </div>
+</div>
+
+<style>
+  .filter-panel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+  }
+  .fset {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+  .filter-label {
+    font-size: var(--size-sm);
+    color: var(--muted);
+    margin: 0;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 400;
+  }
+  .tog-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+  }
+  .tog {
+    border: 1px solid var(--border-strong);
+    background: transparent;
+    color: var(--fg-dim);
+    font: inherit;
+    font-size: var(--size-sm);
+    padding: 2px var(--space-2);
+    cursor: pointer;
+    border-radius: 0;
+    line-height: 1.5;
+  }
+  .tog:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+  .tog[aria-pressed="true"] {
+    color: var(--accent-ink);
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+</style>

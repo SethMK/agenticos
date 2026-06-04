@@ -1,0 +1,398 @@
+---
+export const prerender = true;
+import TerminalLayout from '../../layouts/TerminalLayout.astro';
+import EvidenceBadge from '../../components/research/EvidenceBadge.astro';
+import snapshot from '../../../data/snapshots/public.json';
+
+const research = (snapshot as any).research;
+const { validated, watching, backlog } = research;
+
+const sprintsRun = research.sprints_run != null ? research.sprints_run : '—';
+
+const watchingSorted = [...watching].sort((a: any, b: any) => {
+  const aPct = a.threshold ? a.n / a.threshold : 0;
+  const bPct = b.threshold ? b.n / b.threshold : 0;
+  return bPct - aPct;
+});
+
+const backlogSorted = [...backlog].sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0));
+
+function mkBlocks(n: number, total: number): boolean[] {
+  return Array.from({ length: total }, (_, i) => i < n);
+}
+---
+
+<TerminalLayout title="Research Tracker — AGENTICOS">
+  <main id="main-content" class="trk-frame">
+    <header class="trk-mast">
+      <div class="mast-row">
+        <h2 class="mast-title">
+          <span class="tilde">~</span>/research/tracker
+        </h2>
+        <div class="mast-meta">
+          <span><b>{validated.length}</b> validated</span>
+          <span><b>{watching.length}</b> watching</span>
+          <span><b>{backlog.length}</b> queued</span>
+        </div>
+      </div>
+      <p class="trk-lede">
+        Operations pulse: what is confirmed, what is under observation and how close to promotion, and what is queued.
+      </p>
+    </header>
+
+    <!-- Metric strip: 4 cells -->
+    <div class="strip" role="list" aria-label="Summary metrics">
+      <div class="strip-cell" role="listitem">
+        <span class="strip-v accent">{validated.length}</span>
+        <span class="strip-k">validated</span>
+      </div>
+      <div class="strip-cell" role="listitem">
+        <span class="strip-v">{watching.length}</span>
+        <span class="strip-k">watching</span>
+      </div>
+      <div class="strip-cell" role="listitem">
+        <span class="strip-v">{backlog.length}</span>
+        <span class="strip-k">queued</span>
+      </div>
+      <div class="strip-cell" role="listitem">
+        <span class="strip-v">{sprintsRun}</span>
+        <span class="strip-k">sprints run</span>
+      </div>
+    </div>
+
+    <!-- Three-lane board -->
+    <div class="lanes">
+
+      <!-- VALIDATED lane -->
+      <section class="lane" aria-label="Validated hypotheses">
+        <h3 class="lane-hd">
+          validated <span class="lane-ct">{validated.length}</span>
+        </h3>
+        {validated.map((item: any) => {
+          const sprints = item.evidence?.sprints ?? [];
+          const stories = item.evidence?.stories ?? [];
+          const anchors = [...sprints, ...stories].slice(0, 4);
+          const n = item.evidence?.n ?? 0;
+          return (
+            <article class="tk tk-validated">
+              <div class="tk-id">{item.group} · {item.id}</div>
+              <div class="tk-title">{item.title}</div>
+              <p class="tk-claim">{item.claim}</p>
+              {item.practice && <p class="tk-practice">{item.practice}</p>}
+              <div class="tk-foot">
+                <span class="tk-ev">
+                  <EvidenceBadge n={n} sprints={sprints} stories={stories} />
+                </span>
+                <span class="tk-badge tk-badge-validated" aria-label="Status: passed">passed</span>
+              </div>
+            </article>
+          );
+        })}
+      </section>
+
+      <!-- WATCHING lane: ordered by closeness to promotion (n/threshold desc) -->
+      <section class="lane" aria-label="Watching hypotheses">
+        <h3 class="lane-hd">
+          watching <span class="lane-ct">{watching.length}</span>
+        </h3>
+        {watchingSorted.map((item: any) => {
+          const threshold = item.threshold || 3;
+          const pct = Math.round((item.n / threshold) * 100);
+          const blocks = mkBlocks(item.n, threshold);
+          return (
+            <article class="tk tk-watching">
+              <div class="tk-id">{item.group} · {item.id}</div>
+              <div class="tk-title">{item.title}</div>
+              <p class="tk-claim">{item.claim}</p>
+              <div class="tk-foot">
+                <span class="tk-blocks" aria-hidden="true">
+                  {blocks.map(on => (
+                    <span class:list={[on ? 'blk-on' : 'blk-off']}>{on ? '▓' : '░'}</span>
+                  ))}
+                </span>
+                <span class="tk-n" aria-label={`n=${item.n} of ${threshold} to promote`}>n={item.n}/{threshold}</span>
+              </div>
+              <div
+                class="prog"
+                role="progressbar"
+                aria-valuenow={item.n}
+                aria-valuemin={0}
+                aria-valuemax={threshold}
+                aria-label={`Progress: ${item.n} of ${threshold}`}
+              >
+                <div class="prog-fill" style={`width:${pct}%`}></div>
+              </div>
+              {item.note && <p class="tk-note">{item.note}</p>}
+            </article>
+          );
+        })}
+      </section>
+
+      <!-- QUEUED lane: ordered by descending score -->
+      <section class="lane" aria-label="Queued hypotheses">
+        <h3 class="lane-hd">
+          queued <span class="lane-ct">{backlog.length}</span>
+        </h3>
+        {backlogSorted.map((item: any) => (
+          <article class="tk tk-queued">
+            <div class="tk-id">{item.category ?? '—'} · {item.id}</div>
+            <div class="tk-title">{item.title}</div>
+            <p class="tk-claim">{item.claim}</p>
+            <div class="tk-foot">
+              <span class="tk-ev">
+                score <span class="tk-n">{item.score}</span>
+                {item.artifact && <span class="tk-artifact"> · {item.artifact}</span>}
+              </span>
+              <span class="scorebar" style={`width:${item.score ?? 0}px`} aria-hidden="true"></span>
+            </div>
+          </article>
+        ))}
+      </section>
+
+    </div>
+  </main>
+</TerminalLayout>
+
+<style>
+  .trk-frame {
+    padding: var(--space-5) var(--space-6);
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+
+  /* Masthead */
+  .trk-mast {
+    margin-bottom: var(--space-5);
+    border-bottom: 1px solid var(--border);
+    padding-bottom: var(--space-4);
+  }
+  .mast-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: var(--space-4);
+    flex-wrap: wrap;
+    margin-bottom: var(--space-2);
+  }
+  .mast-title {
+    font-size: var(--size-lg);
+    font-weight: 600;
+    margin: 0;
+    color: var(--fg);
+  }
+  .tilde {
+    color: var(--accent);
+  }
+  .mast-meta {
+    display: flex;
+    gap: var(--space-4);
+    font-size: var(--size-sm);
+    color: var(--muted);
+  }
+  .mast-meta b {
+    color: var(--fg);
+    font-variant-numeric: tabular-nums lining-nums;
+  }
+  .trk-lede {
+    color: var(--fg-dim);
+    font-size: var(--size-sm);
+    margin: 0;
+    max-width: 80ch;
+    line-height: var(--leading-base);
+  }
+
+  /* Metric strip */
+  .strip {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border-strong);
+    margin-bottom: var(--space-5);
+  }
+  .strip-cell {
+    background: var(--bg-panel);
+    padding: var(--space-3) var(--space-4);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+  .strip-v {
+    font-size: var(--size-xl);
+    line-height: 1;
+    color: var(--fg);
+    font-variant-numeric: tabular-nums lining-nums;
+  }
+  .strip-v.accent {
+    color: var(--accent);
+  }
+  .strip-k {
+    color: var(--muted);
+    font-size: var(--size-sm);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  /* Three-lane grid */
+  .lanes {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--space-4);
+    align-items: start;
+  }
+  .lane-hd {
+    font-size: var(--size-sm);
+    font-weight: 400;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--fg-dim);
+    margin: 0 0 var(--space-3);
+    padding-bottom: var(--space-2);
+    border-bottom: 1px solid var(--border-strong);
+    display: flex;
+    justify-content: space-between;
+  }
+  .lane-ct {
+    color: var(--muted);
+  }
+
+  /* Cards */
+  .tk {
+    border: 1px solid var(--border);
+    border-top: 2px solid var(--border-strong);
+    background: var(--bg-panel);
+    padding: var(--space-3);
+    margin-bottom: var(--space-3);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+  .tk:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+  .tk-validated { border-top-color: var(--accent); }
+  .tk-watching  { border-top-color: var(--warn); }
+  .tk-queued    { border-top-color: var(--muted); }
+
+  .tk-id {
+    color: var(--muted);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums lining-nums;
+  }
+  .tk-title {
+    font-weight: 600;
+    color: var(--fg);
+    font-size: var(--size-md);
+  }
+  .tk-claim {
+    color: var(--fg-dim);
+    font-size: var(--size-sm);
+    margin: 0;
+    line-height: var(--leading-base);
+  }
+  .tk-practice {
+    color: var(--muted);
+    font-size: var(--size-sm);
+    margin: 0;
+    font-style: italic;
+  }
+  .tk-note {
+    color: var(--muted);
+    font-size: var(--size-sm);
+    margin: 0;
+    margin-top: var(--space-1);
+  }
+  .tk-foot {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: var(--space-3);
+    font-size: var(--size-sm);
+    gap: var(--space-2);
+  }
+  .tk-ev {
+    color: var(--muted);
+    font-size: var(--size-sm);
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    flex-wrap: wrap;
+  }
+  .tk-n {
+    color: var(--fg-dim);
+    font-variant-numeric: tabular-nums lining-nums;
+  }
+  .tk-artifact {
+    font-style: italic;
+    color: var(--muted);
+  }
+
+  /* Passed badge */
+  .tk-badge {
+    font-size: var(--size-sm);
+    padding: 0 var(--space-2);
+    border: 1px solid var(--border-strong);
+    color: var(--muted);
+    text-transform: lowercase;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .tk-badge-validated {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+
+  /* Unicode block meter */
+  .tk-blocks {
+    letter-spacing: 1px;
+    font-size: var(--size-sm);
+    flex-shrink: 0;
+  }
+  .blk-on  { color: var(--warn); }
+  .blk-off { color: var(--border-strong); }
+
+  /* CSS progress bar */
+  .prog {
+    height: 6px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    margin-top: var(--space-2);
+  }
+  .prog-fill {
+    height: 100%;
+    background: var(--warn);
+  }
+
+  /* Score bar */
+  .scorebar {
+    display: inline-block;
+    height: 6px;
+    background: var(--accent-dim);
+    vertical-align: middle;
+    flex-shrink: 0;
+  }
+
+  /* Responsive: 3 → 1 col at 880px */
+  @media (max-width: 880px) {
+    .lanes {
+      grid-template-columns: 1fr;
+    }
+    .strip {
+      grid-template-columns: repeat(2, 1fr);
+    }
+    .trk-frame {
+      padding: var(--space-4) var(--space-4);
+    }
+  }
+
+  /* Reduced motion */
+  @media (prefers-reduced-motion: reduce) {
+    .prog-fill,
+    .scorebar,
+    .tk {
+      transition: none !important;
+    }
+  }
+</style>

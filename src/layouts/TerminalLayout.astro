@@ -17,6 +17,7 @@ interface Props {
 }
 
 const { title = 'AGENTICOS' } = Astro.props;
+const pathname = Astro.url.pathname.replace(/\/$/, '') || '/';
 ---
 <!DOCTYPE html>
 <html lang="en" data-theme="dark">
@@ -32,11 +33,15 @@ const { title = 'AGENTICOS' } = Astro.props;
       <h1 class="sr-only">AgenticOS</h1>
 
       <header class="brand">
-        <div class="wordmark">
+        <a href="/" class="wordmark" aria-label="AGENTICOS home">
           AGENTICOS<span class="slash">/</span><span class="path">root</span>
-        </div>
+        </a>
         <nav class="brand-nav" aria-label="Site sections">
-          <a href="/how-it-was-built" class="nav-link">how-it-was-built <span aria-hidden="true">→</span></a>
+          <a href="/" class="nav-link" aria-current={pathname === '/' ? 'page' : undefined}>↖ root</a>
+          <a href="/research/explorer" class="nav-link" aria-current={pathname === '/research/explorer' ? 'page' : undefined}>research <span aria-hidden="true">→</span></a>
+          <a href="/research/tracker" class="nav-link" aria-current={pathname === '/research/tracker' ? 'page' : undefined}>tracker <span aria-hidden="true">→</span></a>
+          <a href="/research/garden" class="nav-link" aria-current={pathname === '/research/garden' ? 'page' : undefined}>garden <span aria-hidden="true">→</span></a>
+          <a href="/how-it-was-built" class="nav-link" aria-current={pathname === '/how-it-was-built' ? 'page' : undefined}>how-it-was-built <span aria-hidden="true">→</span></a>
         </nav>
         <div class="brand-meta">v0.1 &middot; self-hosted</div>
       </header>
@@ -122,6 +127,13 @@ const { title = 'AGENTICOS' } = Astro.props;
         color: var(--accent);
         letter-spacing: 0.04em;
         line-height: 1;
+        text-decoration: none;
+        display: inline-block;
+      }
+
+      .wordmark:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
       }
 
       .wordmark .slash {
@@ -144,6 +156,7 @@ const { title = 'AGENTICOS' } = Astro.props;
       .brand-nav {
         margin-left: auto;
         display: flex;
+        gap: var(--space-4);
         align-items: flex-end;
         padding-right: var(--space-6);
       }
@@ -164,6 +177,10 @@ const { title = 'AGENTICOS' } = Astro.props;
       .nav-link:focus-visible {
         outline: 2px solid var(--accent);
         outline-offset: 2px;
+      }
+
+      .nav-link[aria-current="page"] {
+        color: var(--accent);
       }
 
       @media (prefers-reduced-motion: reduce) {

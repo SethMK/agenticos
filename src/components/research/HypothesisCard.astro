@@ -1,0 +1,119 @@
+---
+interface Props {
+  id: string;
+  title: string;
+  claim: string;
+  category?: string;
+  score?: number;
+  artifact?: string;
+  group?: string;
+  selected?: boolean;
+}
+const { id, title, claim, category, score, artifact, group = '?', selected = false } = Astro.props;
+---
+
+<article
+  class:list={['research-card', 'card-backlog', { 'card-selected': selected }]}
+  data-id={id}
+  data-state="backlog"
+  data-group={group}
+  tabindex="0"
+  role="button"
+  aria-pressed={selected ? 'true' : 'false'}
+>
+  <div class="card-top">
+    <span class="card-title">{title}</span>
+    <span class="card-chip"><b>{group}</b></span>
+  </div>
+  <p class="card-claim">{claim}</p>
+  <div class="card-meta">
+    {category && <span class="card-cat">{category}</span>}
+    {score != null && <span class="card-score">score <span class="card-score-val">{score}</span></span>}
+    {artifact && <span class="card-artifact">{artifact}</span>}
+  </div>
+</article>
+
+<style>
+  .research-card {
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--border-strong);
+    background: var(--bg-panel);
+    padding: var(--space-3) var(--space-4);
+    cursor: pointer;
+    border-radius: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+  .research-card:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+  .card-backlog {
+    border-left-color: var(--muted);
+  }
+  .card-selected {
+    background: var(--bg-elevated);
+    border-color: var(--border-strong);
+  }
+  .card-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: var(--space-3);
+  }
+  .card-title {
+    font-weight: 600;
+    font-size: var(--size-md);
+    color: var(--fg);
+  }
+  .card-chip {
+    display: inline-block;
+    border: 1px solid var(--border-strong);
+    color: var(--fg-dim);
+    font-size: var(--size-sm);
+    padding: 0 var(--space-2);
+    line-height: 1.6;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .card-chip b {
+    color: var(--fg);
+  }
+  .card-claim {
+    color: var(--fg-dim);
+    font-size: var(--size-sm);
+    margin: 0;
+    line-height: var(--leading-base);
+  }
+  .card-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin-top: var(--space-1);
+    font-size: var(--size-sm);
+    color: var(--muted);
+  }
+  .card-cat {
+    border: 1px solid var(--border);
+    padding: 0 var(--space-1);
+    font-size: var(--size-sm);
+    color: var(--muted);
+    text-transform: lowercase;
+    letter-spacing: 0.04em;
+  }
+  .card-score {
+    font-size: var(--size-sm);
+    color: var(--muted);
+    font-variant-numeric: tabular-nums lining-nums;
+  }
+  .card-score-val {
+    color: var(--fg-dim);
+    font-variant-numeric: tabular-nums lining-nums;
+  }
+  .card-artifact {
+    font-size: var(--size-sm);
+    color: var(--muted);
+    font-style: italic;
+  }
+</style>

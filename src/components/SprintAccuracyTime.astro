@@ -89,4 +89,6 @@ const VARIANCE_THRESHOLD = 1.5;
   title="ACCURACY (TIME)"
   footerText="time split estimated proportionally from token split (sprint schema does not record per-must time directly)"
   ariaLabel={`Sprint accuracy (time) across ${closed_sprints.length} closed sprints. Plan-and-actual stacked bars in wall-clock minutes, overrun threshold ${VARIANCE_THRESHOLD}x.`}
+  showOverview={true}
+  windowSize={10}
 />

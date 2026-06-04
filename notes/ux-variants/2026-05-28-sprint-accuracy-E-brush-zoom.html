@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<!--
+  VARIANT E — BRUSH / ZOOM (pure SVG, zero JS)
+  Strategy: two-panel layout.
+  OVERVIEW (bottom, compressed): all 23 sprints as 3px-wide stub bars,
+  full time range. Visual context strip.
+  MAIN (top, expanded): last 10 sprints by default at full resolution,
+  with median-normalized scale (cap 90m) + outlier glyphs.
+  "Window" concept shown via a semi-transparent rect on the overview strip.
+  Note: without JS the drag is static — window position is fixed at "last 10".
+  This mockup demonstrates the visual grammar; JS would be needed for live drag.
+  Zero client JS. Pure SVG + inline data.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Variant E — Brush / Zoom Overview</title>
+<style>
+  :root {
+    --bg: #0A0A0A;
+    --bg-panel: #111111;
+    --fg: #E6E6E6;
+    --fg-dim: #9A9A9A;
+    --muted: #6B6B6B;
+    --border: #2A2A2A;
+    --accent: #FF6A00;
+    --accent-dim: #B24A00;
+    --danger: #E5484D;
+    --font-mono: "Fira Code", "JetBrains Mono", ui-monospace, monospace;
+  }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    margin: 0;
+    padding: 24px;
+  }
+  .variant-header {
+    border-left: 3px solid var(--accent);
+    padding: 8px 16px;
+    margin-bottom: 24px;
+    background: var(--bg-panel);
+  }
+  .variant-header h1 { margin: 0 0 4px; font-size: 13px; color: var(--accent); text-transform: uppercase; letter-spacing: 0.1em; }
+  .variant-header p { margin: 0; color: var(--fg-dim); font-size: 11px; }
+  section {
+    border: 1px solid var(--border);
+    background: var(--bg-panel);
+    padding: 24px;
+  }
+  .head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
+  .title { margin: 0; font-size: 11px; color: var(--fg-dim); text-transform: uppercase; letter-spacing: 0.14em; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .title .glyph { color: var(--accent); font-size: 0.65em; }
+  .head-meta { font-size: 11px; color: var(--fg-dim); }
+  .count { color: var(--accent); font-weight: 600; }
+  .sep { color: var(--muted); margin: 0 4px; }
+  .main-chart-wrap { height: 180px; }
+  .overview-wrap { height: 50px; margin-top: 4px; position: relative; }
+  .chart-svg { display: block; width: 100%; height: 100%; }
+  .legend { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-top: 16px; font-size: 10px; color: var(--fg-dim); letter-spacing: 0.06em; text-transform: uppercase; }
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .legend-swatch { display: inline-block; width: 14px; height: 8px; flex-shrink: 0; }
+  .chart-footer { font-size: 11px; color: var(--fg-dim); margin: 10px 0 0; font-style: italic; }
+  .panel-label { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 2px; }
+  .brush-note { font-size: 9px; color: var(--muted); margin-top: 4px; }
+</style>
+</head>
+<body>
+
+<div class="variant-header">
+  <h1>◆ Variant E — Brush / Zoom (Static Mockup)</h1>
+  <p>Two-panel: main view (last 10 sprints, full resolution) + overview strip (all 23, compressed). A translucent selection window on the overview strip indicates which sprints are shown above. In production, the brush handle would require ~30 lines of JS for drag; this mockup shows the visual grammar only.</p>
+</div>
+
+<section aria-label="Sprint accuracy time brush-zoom variant">
+  <div class="head">
+    <h2 class="title"><span class="glyph" aria-hidden="true">◆</span> ACCURACY (TIME) · BRUSH</h2>
+    <div class="head-meta">
+      <span class="count">23</span>
+      <span class="sep">closed sprints</span>
+      <span class="sep">·</span>
+      <span>wall-clock min</span>
+      <span class="sep">·</span>
+      <span style="color:var(--muted)">main: last 10</span>
+    </div>
+  </div>
+
+  <!-- MAIN PANEL: last 10 sprints at full resolution -->
+  <p class="panel-label">▶ detail · SPR-014 → SPR-023</p>
+  <div class="main-chart-wrap">
+    <!--
+      Same geometry as Variant D "last 10" but height=180 instead of 220.
+      PAD_TOP=20, PAD_BOTTOM=36, PLOT_H=124, Y_MAX=130
+      yV(v)=20+124*(1-v/130)
+      yV(0)=144, yV(90)=20+124*(1-90/130)=20+124*0.308=58.2
+      yV(60)=20+124*(1-60/130)=20+124*0.538=86.7
+      yV(130)=20
+      yV(45)=20+124*0.654=101.1
+      yV(27)=20+124*0.792=118.2
+      yV(37)=20+124*0.715=108.7
+      yV(28)=20+124*0.785=117.3
+      yV(32)=20+124*0.754=113.5
+      yV(3)=20+124*0.977=141.1
+      yV(113)=20+124*0.131=36.2
+      yV(59)=20+124*0.546=87.7
+      yV(19)=20+124*0.854=125.9
+      yV(35)=20+124*0.731=110.6
+      n=10, slotW=55.6, barW=16.7
+    -->
+    <svg class="chart-svg" viewBox="0 0 600 180" preserveAspectRatio="xMidYMid meet" role="img">
+      <!-- Grid -->
+      <line stroke="#2A2A2A" stroke-width="0.5" stroke-dasharray="1 3" x1="36" x2="592" y1="144" y2="144"/>
+      <line stroke="#2A2A2A" stroke-width="0.5" stroke-dasharray="1 3" x1="36" x2="592" y1="98" y2="98"/>
+      <line stroke="#2A2A2A" stroke-width="0.5" stroke-dasharray="1 3" x1="36" x2="592" y1="58" y2="58"/>
+      <line stroke="#2A2A2A" stroke-width="0.5" stroke-dasharray="1 3" x1="36" x2="592" y1="20" y2="20"/>
+      <text fill="#6B6B6B" font-family="monospace" font-size="9" text-anchor="end" x="32" y="147">0m</text>
+      <text fill="#6B6B6B" font-family="monospace" font-size="9" text-anchor="end" x="32" y="61">90m</text>
+      <text fill="#6B6B6B" font-family="monospace" font-size="9" text-anchor="end" x="32" y="23">130m</text>
+
+      <!-- SPR-014: plan=90(y=58.2), actual=45(y=101.1) -->
+      <rect fill="#B24A00" x="44.3" y="58.2" width="16.7" height="85.8"><title>SPR-014 plan 90m</title></rect>
+      <rect fill="#FF6A00" x="66.6" y="101.1" width="16.7" height="42.9"><title>SPR-014 actual 45m</title></rect>
+      <text fill="#6B6B6B" font-family="monospace" font-size="8" text-anchor="middle" x="64.1" y="160">14</text>
+
+      <!-- SPR-015: plan=90, actual=27(y=118.2) -->
+      <rect fill="#B24A00" x="99.9" y="58.2" width="16.7" height="85.8"><title>SPR-015 plan 90m</title></rect>
+      <rect fill="#FF6A00" x="122.2" y="118.2" width="16.7" height="25.8"><title>SPR-015 actual 27m</title></rect>
+      <text fill="#6B6B6B" font-family="monospace" font-size="8" text-anchor="middle" x="119.7" y="160">15</text>
+
+      <!-- SPR-016: plan=90, actual=37(y=108.7) -->
+      <rect fill="#B24A00" x="155.5" y="58.2" width="16.7" height="85.8"><title>SPR-016 plan 90m</title></rect>
+      <rect fill="#FF6A00" x="177.8" y="108.7" width="16.7" height="35.3"><title>SPR-016 actual 37m</title></rect>
+      <text fill="#6B6B6B" font-family="monospace" font-size="8" text-anchor="middle" x="175.3" y="160">16</text>
+
+      <!-- SPR-017: plan=90, actual=28(y=117.3) -->
+      <rect fill="#B24A00" x="211.1" y="58.2" width="16.7" height="85.8"><title>SPR-017 plan 90m</title></rect>
+      <rect fill="#FF6A00" x="233.4" y="117.3" width="16.7" height="26.7"><title>SPR-017 actual 28m</title></rect>
+      <text fill="#6B6B6B" font-family="monospace" font-size="8" text-anchor="middle" x="230.9" y="160">17</text>
+
+      <!-- SPR-018: plan=90, actual=32(y=113.5) -->
+      <rect fill="#B24A00" x="266.7" y="58.2" width="16.7" height="85.8"><title>SPR-018 plan 90m</title></rect>
+      <rect fill="#FF6A00" x="289.0" y="113.5" width="16.7" height="30.5"><title>SPR-018 actual 32m</title></rect>
+      <text fill="#6B6B6B" font-family="monospace" font-size="8" text-anchor="middle" x="286.5" y="160">18</text>
+
+      <!-- SPR-019: plan=60(yV(60)=86.7), actual=3(y=141.1) -->
+      <rect fill="#B24A00" x="322.3" y="86.7" width="16.7" height="57.3"><title>SPR-019 plan 60m</title></rect>
+      <rect fill="#FF6A00" x="344.6" y="141.1" width="16.7" height="2.9"><title>SPR-019 actual 3m</title></rect>
+      <text fill="#6B6B6B" font-family="monospace" font-size="8" text-anchor="middle" x="342.1" y="160">19</text>
+
+      <!-- SPR-020: plan=90, actual=113(y=36.2) -->
+      <rect fill="#B24A00" x="377.9" y="58.2" width="16.7" height="85.8"><title>SPR-020 plan 90m</title></rect>
+      <rect fill="#FF6A00" x="400.2" y="36.2" width="16.7" height="107.8"><title>SPR-020 actual 113m · 1.26×</title></rect>
+      <text fill="#6B6B6B" font-family="monospace" font-size="8" text-anchor="middle" x="397.7" y="160">20</text>
+
+      <!-- SPR-021: plan=90, actual=59(y=87.7) -->
+      <rect fill="#B24A00" x="433.5" y="58.2" width="16.7" height="85.8"><title>SPR-021 plan 90m</title></rect>
+      <rect fill="#FF6A00" x="455.8" y="87.7" width="16.7" height="56.3"><title>SPR-021 actual 59m</title></rect>
+      <text fill="#6B6B6B" font-family="monospace" font-size="8" text-anchor="middle" x="453.3" y="160">21</text>
+
+      <!-- SPR-022: plan=90, actual=19(y=125.9) -->
+      <rect fill="#B24A00" x="489.1" y="58.2" width="16.7" height="85.8"><title>SPR-022 plan 90m</title></rect>
+      <rect fill="#FF6A00" x="511.4" y="125.9" width="16.7" height="18.1"><title>SPR-022 actual 19m</title></rect>
+      <text fill="#6B6B6B" font-family="monospace" font-size="8" text-anchor="middle" x="508.9" y="160">22</text>
+
+      <!-- SPR-023: plan=90, actual=35(y=110.6) -->
+      <rect fill="#B24A00" x="544.7" y="58.2" width="16.7" height="85.8"><title>SPR-023 plan 90m</title></rect>
+      <rect fill="#FF6A00" x="567.0" y="110.6" width="16.7" height="33.4"><title>SPR-023 actual 35m</title></rect>
+      <text fill="#6B6B6B" font-family="monospace" font-size="8" text-anchor="middle" x="564.5" y="160">23</text>
+    </svg>
+  </div>
+
+  <!-- OVERVIEW STRIP: all 23 sprints, compressed -->
+  <p class="panel-label">▶ overview · all 23 sprints</p>
+  <div class="overview-wrap">
+    <!--
+      Overview strip: 600×50, PAD_LEFT=36, PAD_RIGHT=8, PLOT_W=556
+      n=23, slotW=24.17
+      Each slot: one 5px-wide bar (actual height) + 1px gap
+      Y scale: Y_MAX=168 (raw max), PLOT_H=40 (PAD_TOP=5, PAD_BOT=5)
+      yV(v)=5 + 40*(1 - v/168)
+      yBase=45
+
+      Plan bar: width=5, fill=accent-dim
+      Actual bar: width=5, offset +6, fill=accent (or danger if overrun)
+
+      xA(i)=36 + 24.17*i + 2
+      xB(i)=xA(i)+6
+
+      actual heights (v/168, h=40*(v/168)):
+        3→0.7, 8→1.9, 13→3.1, 19→4.5, 20→4.8, 22→5.2, 27→6.4, 28→6.7,
+        32→7.6, 35→8.3, 36→8.6, 37→8.8, 41→9.8, 45→10.7, 59→14.0,
+        73→17.4, 90→21.4, 113→26.9, 168→40.0
+      plan heights (60→14.3, 90→21.4)
+    -->
+    <svg class="chart-svg" viewBox="0 0 600 50" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Overview all 23 sprints">
+      <!-- Background -->
+      <rect x="36" y="0" width="556" height="50" fill="#0D0D0D"/>
+
+      <!-- Selected window (SPR-014..023 = i=13..22) -->
+      <!-- xA(13)=36+24.17*13+2=352.2, xA(22)=36+24.17*22+2=569.7, width to slot end=569.7+11=580.7 -->
+      <rect x="352" y="0" width="232" height="50" fill="#FF6A00" opacity="0.06"/>
+      <rect x="352" y="0" width="1" height="50" fill="#FF6A00" opacity="0.4"/>
+      <rect x="584" y="0" width="1" height="50" fill="#FF6A00" opacity="0.4"/>
+      <text fill="#FF6A00" font-family="monospace" font-size="7" x="355" y="9" opacity="0.7">14–23</text>
+
+      <!-- All 23 sprint bars (plan=blue-dim, actual=accent/danger) -->
+      <!-- i=0 SPR-001: plan=60(h=14.3), actual=20(h=4.8) -->
+      <rect fill="#6B3A00" x="38" y="30.7" width="5" height="14.3"><title>SPR-001 plan 60m</title></rect>
+      <rect fill="#B24A00" x="44" y="40.2" width="5" height="4.8"><title>SPR-001 actual 20m</title></rect>
+      <!-- i=1 SPR-002: actual=36(h=8.6) -->
+      <rect fill="#6B3A00" x="62.2" y="30.7" width="5" height="14.3"/>
+      <rect fill="#B24A00" x="68.2" y="36.4" width="5" height="8.6"/>
+      <!-- i=2 SPR-003: actual=41(h=9.8) -->
+      <rect fill="#6B3A00" x="86.3" y="30.7" width="5" height="14.3"/>
+      <rect fill="#B24A00" x="92.3" y="35.2" width="5" height="9.8"/>
+      <!-- i=3 SPR-004: actual=35(h=8.3) -->
+      <rect fill="#6B3A00" x="110.5" y="30.7" width="5" height="14.3"/>
+      <rect fill="#B24A00" x="116.5" y="36.7" width="5" height="8.3"/>
+      <!-- i=4 SPR-005: actual=13(h=3.1) -->
+      <rect fill="#6B3A00" x="134.7" y="30.7" width="5" height="14.3"/>
+      <rect fill="#B24A00" x="140.7" y="41.9" width="5" height="3.1"/>
+      <!-- i=5 SPR-006: actual=37(h=8.8) -->
+      <rect fill="#6B3A00" x="158.9" y="30.7" width="5" height="14.3"/>
+      <rect fill="#B24A00" x="164.9" y="36.2" width="5" height="8.8"/>
+      <!-- i=6 SPR-007: actual=22(h=5.2) -->
+      <rect fill="#6B3A00" x="183.0" y="30.7" width="5" height="14.3"/>
+      <rect fill="#B24A00" x="189.0" y="39.8" width="5" height="5.2"/>
+      <!-- i=7 SPR-008: actual=41 -->
+      <rect fill="#6B3A00" x="207.2" y="30.7" width="5" height="14.3"/>
+      <rect fill="#B24A00" x="213.2" y="35.2" width="5" height="9.8"/>
+      <!-- i=8 SPR-009: actual=73(h=17.4) -->
+      <rect fill="#6B3A00" x="231.4" y="30.7" width="5" height="14.3"/>
+      <rect fill="#B24A00" x="237.4" y="27.6" width="5" height="17.4"/>
+      <!-- i=9 SPR-010: actual=168 OVERRUN — danger color, full height -->
+      <rect fill="#6B3A00" x="255.5" y="30.7" width="5" height="14.3"/>
+      <rect fill="#E5484D" x="261.5" y="5.0" width="5" height="40.0"><title>SPR-010 168m OUTLIER</title></rect>
+      <!-- i=10 SPR-011: actual=90(h=21.4) -->
+      <rect fill="#6B3A00" x="279.7" y="30.7" width="5" height="14.3"/>
+      <rect fill="#B24A00" x="285.7" y="23.6" width="5" height="21.4"/>
+      <!-- i=11 SPR-012: actual=20 -->
+      <rect fill="#6B3A00" x="303.9" y="30.7" width="5" height="14.3"/>
+      <rect fill="#B24A00" x="309.9" y="40.2" width="5" height="4.8"/>
+      <!-- i=12 SPR-013: actual=8 -->
+      <rect fill="#6B3A00" x="328.0" y="30.7" width="5" height="14.3"/>
+      <rect fill="#B24A00" x="334.0" y="43.1" width="5" height="1.9"/>
+      <!-- i=13 SPR-014: plan=90, actual=45 — in window -->
+      <rect fill="#8C4A00" x="352.2" y="23.6" width="5" height="21.4"/>
+      <rect fill="#FF6A00" x="358.2" y="34.3" width="5" height="10.7"/>
+      <!-- i=14 SPR-015: actual=27 -->
+      <rect fill="#8C4A00" x="376.4" y="23.6" width="5" height="21.4"/>
+      <rect fill="#FF6A00" x="382.4" y="38.6" width="5" height="6.4"/>
+      <!-- i=15 SPR-016: actual=37 -->
+      <rect fill="#8C4A00" x="400.5" y="23.6" width="5" height="21.4"/>
+      <rect fill="#FF6A00" x="406.5" y="36.2" width="5" height="8.8"/>
+      <!-- i=16 SPR-017: actual=28 -->
+      <rect fill="#8C4A00" x="424.7" y="23.6" width="5" height="21.4"/>
+      <rect fill="#FF6A00" x="430.7" y="38.3" width="5" height="6.7"/>
+      <!-- i=17 SPR-018: actual=32 -->
+      <rect fill="#8C4A00" x="448.9" y="23.6" width="5" height="21.4"/>
+      <rect fill="#FF6A00" x="454.9" y="37.4" width="5" height="7.6"/>
+      <!-- i=18 SPR-019: plan=60, actual=3 -->
+      <rect fill="#8C4A00" x="473.0" y="30.7" width="5" height="14.3"/>
+      <rect fill="#FF6A00" x="479.0" y="44.3" width="5" height="0.7"/>
+      <!-- i=19 SPR-020: actual=113 — in window, slightly elevated -->
+      <rect fill="#8C4A00" x="497.2" y="23.6" width="5" height="21.4"/>
+      <rect fill="#FF6A00" x="503.2" y="18.1" width="5" height="26.9"/>
+      <!-- i=20 SPR-021: actual=59 -->
+      <rect fill="#8C4A00" x="521.4" y="23.6" width="5" height="21.4"/>
+      <rect fill="#FF6A00" x="527.4" y="31.0" width="5" height="14.0"/>
+      <!-- i=21 SPR-022: actual=19 -->
+      <rect fill="#8C4A00" x="545.5" y="23.6" width="5" height="21.4"/>
+      <rect fill="#FF6A00" x="551.5" y="40.5" width="5" height="4.5"/>
+      <!-- i=22 SPR-023: actual=35 -->
+      <rect fill="#8C4A00" x="569.7" y="23.6" width="5" height="21.4"/>
+      <rect fill="#FF6A00" x="575.7" y="36.7" width="5" height="8.3"/>
+
+      <!-- Axis baseline -->
+      <line stroke="#3A3A3A" stroke-width="0.5" x1="36" x2="592" y1="45" y2="45"/>
+    </svg>
+  </div>
+  <p class="brush-note">drag handle to change window · requires ~30 lines JS for live interaction (static mockup)</p>
+
+  <div class="legend">
+    <span class="legend-item"><span class="legend-swatch" style="background:#B24A00"></span>plan</span>
+    <span class="legend-item"><span class="legend-swatch" style="background:#FF6A00"></span>actual</span>
+    <span class="legend-item"><span class="legend-swatch" style="background:#E5484D"></span>outlier</span>
+    <span class="legend-item"><span class="legend-swatch" style="background:#FF6A00;opacity:0.15"></span>selection window</span>
+  </div>
+  <p class="chart-footer">time split estimated proportionally from token split</p>
+</section>
+
+</body>
+</html>

@@ -1,0 +1,538 @@
+---
+export const prerender = true;
+import TerminalLayout from '../../layouts/TerminalLayout.astro';
+import StatusFilter from '../../components/research/StatusFilter.astro';
+import snapshot from '../../../data/snapshots/public.json';
+
+const research = (snapshot as any).research;
+const { groups, validated, watching, backlog } = research;
+
+const catToGroup: Record<string, string> = {
+  data: 'E', process: 'C', 'cost-model': 'A', 'tool-choice': 'D',
+};
+
+interface Item {
+  id: string; group: string; title: string; claim: string;
+  practice: string; state: string; n: number;
+  sprints: string[]; stories: string[];
+  note: string; threshold: number; score: number; artifact: string;
+}
+
+const items: Item[] = [
+  ...validated.map((x: any): Item => ({
+    id: x.id, group: x.group, title: x.title, claim: x.claim,
+    practice: x.practice || '', state: 'validated',
+    n: x.evidence?.n ?? 0,
+    sprints: x.evidence?.sprints ?? [],
+    stories: x.evidence?.stories ?? [],
+    note: '', threshold: 0, score: 0, artifact: '',
+  })),
+  ...watching.map((x: any): Item => ({
+    id: x.id, group: x.group, title: x.title, claim: x.claim,
+    practice: '', state: 'watching',
+    n: x.n ?? 0, sprints: x.sprints ?? [], stories: [],
+    note: x.note || '', threshold: x.threshold || 0, score: 0, artifact: '',
+  })),
+  ...backlog.map((x: any): Item => ({
+    id: x.id, group: catToGroup[x.category] || 'F', title: x.title, claim: x.claim,
+    practice: '', state: 'backlog',
+    n: 0, sprints: [], stories: [],
+    note: '', threshold: 0, score: x.score || 0, artifact: x.artifact || '',
+  })),
+];
+
+const totalCount = items.length;
+---
+
+<TerminalLayout title="Research Explorer — AGENTICOS">
+  <main id="main-content" class="exp-frame">
+    <header class="exp-mast">
+      <div class="mast-row">
+        <h1 class="mast-title">
+          <span class="tilde">~</span>/research/explorer
+        </h1>
+        <div class="mast-meta">
+          <span><b>{totalCount}</b> hypotheses</span>
+          <span>scatter: evidence × recency</span>
+        </div>
+      </div>
+      <p class="exp-lede">
+        Browse by theme, state, or weight of evidence. The scatter plots every hypothesis
+        by how many times it's been seen (x) against how recently (y); click a dot or a
+        card to inspect.
+      </p>
+    </header>
+
+    <div class="exp-grid">
+      <!-- LEFT: filters + scatter -->
+      <div class="col-l">
+        <StatusFilter groups={groups} />
+
+        <figure class="scatter-fig">
+          <svg
+            id="scatter-svg"
+            viewBox="0 0 240 200"
+            width="100%"
+            role="img"
+            aria-label="Scatter of hypotheses by evidence count and recency"
+          ></svg>
+          <figcaption class="scatter-cap">
+            x → evidence (n) · y ↑ recency · size → n · colour → state
+          </figcaption>
+        </figure>
+      </div>
+
+      <!-- CENTRE: card list -->
+      <div class="col-c">
+        <div id="card-list">
+          {items.map(it => (
+            <article
+              class:list={['exp-card', `card-${it.state}`]}
+              data-id={it.id}
+              data-state={it.state}
+              data-group={it.group}
+              tabindex="0"
+              role="button"
+              aria-pressed="false"
+            >
+              <div class="card-top">
+                <span class="card-title">{it.title}</span>
+                <span class="card-chip"><b>{it.group}</b></span>
+              </div>
+              <p class="card-claim">{it.claim}</p>
+            </article>
+          ))}
+        </div>
+      </div>
+
+      <!-- RIGHT: detail panel -->
+      <aside class="col-r" id="detail" aria-live="polite" aria-atomic="true">
+        <p class="empty">
+          Select a hypothesis to see its full claim, best-practice, and evidence trail.
+        </p>
+      </aside>
+    </div>
+  </main>
+</TerminalLayout>
+
+<!-- Pass build-time data to client JS -->
+<script id="exp-data" type="application/json" set:html={JSON.stringify(items)}></script>
+
+<script is:inline>
+(function () {
+  'use strict';
+
+  const items = JSON.parse(document.getElementById('exp-data').textContent);
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // ── Filter state ─────────────────────────────────────────────
+  const fState = new Set(['validated', 'watching', 'backlog']);
+  const fGroup = new Set(); // empty = show all groups
+  let sel = null;
+
+  function visible(it) {
+    return fState.has(it.state) && (!fGroup.size || fGroup.has(it.group));
+  }
+
+  // ── Scatter ──────────────────────────────────────────────────
+  const COL = {
+    validated: 'var(--accent)',
+    watching:  'var(--warn)',
+    backlog:   'var(--muted)',
+  };
+
+  function recency(it) {
+    const ordinals = (it.sprints || []).map(s => {
+      const m = /SPR-0?(\d+)/.exec(s);
+      return m ? +m[1] : 1;
+    });
+    const backlogFloor = it.state === 'backlog' ? 34 : 1;
+    return Math.max(0, ...ordinals, backlogFloor);
+  }
+
+  function drawScatter() {
+    const svg = document.getElementById('scatter-svg');
+    if (!svg) return;
+    svg.innerHTML = '';
+
+    const X0 = 28, X1 = 228, Y0 = 14, Y1 = 176;
+    const nMax = 8, rMax = 34;
+    const ns = 'http://www.w3.org/2000/svg';
+
+    function el(tag, attrs) {
+      const e = document.createElementNS(ns, tag);
+      for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+      return e;
+    }
+
+    svg.appendChild(el('line', { class: 'sc-axis', x1: X0, y1: Y1, x2: X1, y2: Y1 }));
+    svg.appendChild(el('line', { class: 'sc-axis', x1: X0, y1: Y0, x2: X0, y2: Y1 }));
+    svg.appendChild(el('text', { class: 'sc-lab', x: X1, y: Y1 + 12, 'text-anchor': 'end' })).textContent = 'n=8';
+    svg.appendChild(el('text', { class: 'sc-lab', x: X0,  y: Y1 + 12 })).textContent = '0';
+    svg.appendChild(el('text', { class: 'sc-lab', x: X0 - 4, y: Y0 + 4, 'text-anchor': 'end' })).textContent = 'new';
+
+    items.forEach(it => {
+      const x  = X0 + (Math.min(it.n, nMax) / nMax) * (X1 - X0);
+      const y  = Y1 - (Math.min(recency(it), rMax) / rMax) * (Y1 - Y0);
+      const r  = 3 + Math.min(it.n, 6) * 0.9;
+      const col = COL[it.state];
+
+      const dot = el('circle', {
+        cx: x.toFixed(1), cy: y.toFixed(1), r: r.toFixed(1),
+        fill:         it.state === 'backlog' ? 'none' : col,
+        stroke:       col,
+        'stroke-width': '1',
+        class:        'sc-dot' + (visible(it) ? '' : ' dim'),
+      });
+      dot.dataset.id = it.id;
+      if (!reducedMotion) dot.style.transition = 'opacity var(--motion-fast) var(--easing)';
+
+      const title = document.createElementNS(ns, 'title');
+      title.textContent = `${it.title} — n=${it.n}`;
+      dot.appendChild(title);
+
+      dot.style.cursor = 'pointer';
+      dot.addEventListener('click', () => select(it.id));
+      dot.addEventListener('mouseenter', () => hoverCard(it.id, true));
+      dot.addEventListener('mouseleave', () => hoverCard(it.id, false));
+
+      svg.appendChild(dot);
+    });
+  }
+
+  function hoverCard(id, on) {
+    const c = document.querySelector(`.exp-card[data-id="${id}"]`);
+    if (c) c.style.borderLeftColor = on ? 'var(--accent)' : '';
+  }
+
+  // ── Card list ────────────────────────────────────────────────
+  function render() {
+    document.querySelectorAll('.exp-card').forEach(el => {
+      const it = items.find(x => x.id === el.dataset.id);
+      if (!it) return;
+      el.classList.toggle('dim', !visible(it));
+      el.classList.toggle('card-sel', it.id === sel);
+      el.setAttribute('aria-pressed', it.id === sel ? 'true' : 'false');
+    });
+    document.querySelectorAll('.sc-dot').forEach(dot => {
+      const it = items.find(x => x.id === dot.dataset.id);
+      if (!it) return;
+      dot.classList.toggle('dim', !visible(it));
+    });
+    paintDetail();
+  }
+
+  function select(id) {
+    sel = id;
+    render();
+  }
+
+  function paintDetail() {
+    const panel = document.getElementById('detail');
+    if (!panel) return;
+    const it = items.find(x => x.id === sel);
+    if (!it) {
+      panel.innerHTML = '<p class="empty">Select a hypothesis to see its full claim, best-practice, and evidence trail.</p>';
+      return;
+    }
+    const anchors = [...(it.sprints || []), ...(it.stories || [])].join(' · ') || '—';
+    let nline;
+    if (it.state === 'watching')      nline = `n=${it.n} / ${it.threshold} to promote`;
+    else if (it.state === 'backlog')  nline = `queued · score ${it.score}`;
+    else                              nline = `n=${it.n}`;
+
+    panel.innerHTML = `
+      <span class="dt-badge dt-${it.state}">${it.state}</span>
+      <p class="dt-title">${it.title}</p>
+      <dl class="dt-dl">
+        <dt>claim</dt><dd>${it.claim}</dd>
+        ${it.practice  ? `<dt>best practice</dt><dd>${it.practice}</dd>` : ''}
+        ${it.note      ? `<dt>note</dt><dd>${it.note}</dd>` : ''}
+        ${it.artifact  ? `<dt>expected artifact</dt><dd>${it.artifact}</dd>` : ''}
+        <dt>evidence</dt>
+        <dd><span class="ev-n">${nline}</span></dd>
+        <dt>anchors</dt>
+        <dd class="ev-anchors">${anchors}</dd>
+      </dl>`;
+  }
+
+  // ── Wire up filter buttons ───────────────────────────────────
+  document.querySelectorAll('[data-filter-state]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const st = btn.dataset.filterState;
+      const on = btn.getAttribute('aria-pressed') === 'true';
+      on ? fState.delete(st) : fState.add(st);
+      btn.setAttribute('aria-pressed', String(!on));
+      render();
+    });
+  });
+
+  document.querySelectorAll('[data-filter-group]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const gr = btn.dataset.filterGroup;
+      const on = btn.getAttribute('aria-pressed') === 'true';
+      on ? fGroup.delete(gr) : fGroup.add(gr);
+      btn.setAttribute('aria-pressed', String(!on));
+      render();
+    });
+  });
+
+  // ── Wire up card clicks + keyboard ───────────────────────────
+  document.querySelectorAll('.exp-card').forEach(card => {
+    card.addEventListener('click', () => select(card.dataset.id));
+    card.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        select(card.dataset.id);
+      }
+    });
+  });
+
+  // ── Init ─────────────────────────────────────────────────────
+  drawScatter();
+  if (items.length) select(items[0].id);
+})();
+</script>
+
+<style>
+  /* ── Page frame ──────────────────────────────────────────────── */
+  .exp-frame {
+    padding: var(--space-5) var(--space-6);
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+
+  /* ── Masthead ─────────────────────────────────────────────────── */
+  .exp-mast {
+    margin-bottom: var(--space-5);
+    border-bottom: 1px solid var(--border);
+    padding-bottom: var(--space-4);
+  }
+  .mast-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: var(--space-4);
+    flex-wrap: wrap;
+    margin-bottom: var(--space-2);
+  }
+  .mast-title {
+    font-size: var(--size-lg);
+    font-weight: 600;
+    margin: 0;
+    color: var(--fg);
+  }
+  .tilde {
+    color: var(--accent);
+  }
+  .mast-meta {
+    display: flex;
+    gap: var(--space-4);
+    font-size: var(--size-sm);
+    color: var(--muted);
+  }
+  .mast-meta b {
+    color: var(--fg);
+    font-variant-numeric: tabular-nums lining-nums;
+  }
+  .exp-lede {
+    color: var(--fg-dim);
+    font-size: var(--size-sm);
+    margin: 0;
+    max-width: 80ch;
+    line-height: var(--leading-base);
+  }
+
+  /* ── 3-pane grid ─────────────────────────────────────────────── */
+  .exp-grid {
+    display: grid;
+    grid-template-columns: 260px 1fr 320px;
+    gap: var(--space-5);
+    align-items: start;
+  }
+
+  .col-l {
+    position: sticky;
+    top: var(--space-4);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-5);
+  }
+
+  .col-r {
+    position: sticky;
+    top: var(--space-4);
+    border: 1px solid var(--border-strong);
+    background: var(--bg-panel);
+    padding: var(--space-4);
+  }
+
+  /* ── Scatter ─────────────────────────────────────────────────── */
+  .scatter-fig {
+    margin: 0;
+    border: 1px solid var(--border);
+    background: var(--bg-panel);
+    padding: var(--space-3);
+  }
+  .scatter-cap {
+    color: var(--muted);
+    font-size: var(--size-sm);
+    margin-top: var(--space-2);
+    display: block;
+  }
+
+  /* SVG internals (injected by JS, styled globally via CSS) */
+  :global(.sc-axis) {
+    stroke: var(--border-strong);
+    stroke-width: 1;
+  }
+  :global(.sc-lab) {
+    fill: var(--muted);
+    font-size: 9px;
+    font-family: var(--font-mono);
+  }
+  :global(.sc-dot) {
+    cursor: pointer;
+  }
+  :global(.sc-dot.dim) {
+    opacity: 0.12;
+  }
+
+  /* ── Card list ───────────────────────────────────────────────── */
+  #card-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .exp-card {
+    border: 1px solid var(--border);
+    border-left: 2px solid var(--border-strong);
+    background: var(--bg-panel);
+    padding: var(--space-3) var(--space-4);
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+  .exp-card:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+  .card-validated { border-left-color: var(--accent); }
+  .card-watching  { border-left-color: var(--warn); }
+  .card-backlog   { border-left-color: var(--muted); }
+
+  .exp-card.dim {
+    opacity: 0.25;
+    pointer-events: none;
+  }
+  .exp-card.card-sel {
+    background: var(--bg-elevated);
+    border-color: var(--border-strong);
+  }
+
+  .card-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: var(--space-3);
+  }
+  .card-title {
+    font-weight: 600;
+    font-size: var(--size-md);
+    color: var(--fg);
+  }
+  .card-chip {
+    display: inline-block;
+    border: 1px solid var(--border-strong);
+    color: var(--fg-dim);
+    font-size: var(--size-sm);
+    padding: 0 var(--space-2);
+    line-height: 1.6;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .card-chip b { color: var(--fg); }
+
+  .card-claim {
+    color: var(--fg-dim);
+    font-size: var(--size-sm);
+    margin: 0;
+    line-height: var(--leading-base);
+  }
+
+  /* ── Detail panel ────────────────────────────────────────────── */
+  .empty {
+    color: var(--muted);
+    font-size: var(--size-sm);
+    margin: 0;
+  }
+
+  :global(.dt-badge) {
+    display: inline-block;
+    font-size: var(--size-sm);
+    padding: 1px var(--space-2);
+    border: 1px solid var(--border-strong);
+    color: var(--fg-dim);
+    margin-bottom: var(--space-3);
+    text-transform: lowercase;
+    letter-spacing: 0.04em;
+  }
+  :global(.dt-validated) { color: var(--accent); border-color: var(--accent); }
+  :global(.dt-watching)  { color: var(--warn);   border-color: var(--warn); }
+  :global(.dt-backlog)   { color: var(--muted);  border-color: var(--muted); }
+
+  :global(.dt-title) {
+    font-size: var(--size-md);
+    font-weight: 600;
+    margin: 0 0 var(--space-2);
+    color: var(--fg);
+  }
+
+  :global(.dt-dl) {
+    margin: var(--space-3) 0 0;
+    font-size: var(--size-sm);
+  }
+  :global(.dt-dl dt) {
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 11px;
+    margin-top: var(--space-3);
+  }
+  :global(.dt-dl dd) {
+    margin: 2px 0 0;
+    color: var(--fg-dim);
+    line-height: var(--leading-base);
+  }
+  :global(.ev-n) {
+    color: var(--accent);
+    font-variant-numeric: tabular-nums lining-nums;
+  }
+  :global(.ev-anchors) {
+    color: var(--fg-dim);
+    word-break: break-all;
+  }
+
+  /* ── Responsive ──────────────────────────────────────────────── */
+  @media (max-width: 980px) {
+    .exp-grid {
+      grid-template-columns: 1fr;
+    }
+    .col-l,
+    .col-r {
+      position: static;
+    }
+  }
+
+  /* ── Reduced motion ──────────────────────────────────────────── */
+  @media (prefers-reduced-motion: reduce) {
+    :global(.sc-dot) {
+      transition: none !important;
+    }
+    .exp-card {
+      transition: none !important;
+    }
+  }
+</style>

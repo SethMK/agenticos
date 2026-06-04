@@ -1,0 +1,41 @@
+---
+interface Props {
+  n: number;
+  sprints?: string[];
+  stories?: string[];
+}
+const { n, sprints = [], stories = [] } = Astro.props;
+const anchors = [...sprints, ...stories];
+---
+
+<span class="ev">
+  <span class="ev-n">{n}</span>
+  {anchors.length > 0 && (
+    <span class="ev-anchors">
+      {anchors.map((a, i) => (
+        <span class="ev-anchor">{i > 0 && <span class="ev-sep"> · </span>}{a}</span>
+      ))}
+    </span>
+  )}
+</span>
+
+<style>
+  .ev {
+    display: inline-flex;
+    align-items: baseline;
+    gap: var(--space-2);
+    font-size: var(--size-sm);
+    font-variant-numeric: tabular-nums lining-nums;
+    color: var(--muted);
+  }
+  .ev-n {
+    color: var(--accent);
+    font-variant-numeric: tabular-nums lining-nums;
+  }
+  .ev-anchors {
+    color: var(--fg-dim);
+  }
+  .ev-sep {
+    color: var(--muted);
+  }
+</style>

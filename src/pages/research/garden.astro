@@ -1,0 +1,356 @@
+---
+export const prerender = true;
+import TerminalLayout from '../../layouts/TerminalLayout.astro';
+import snapshot from '../../../data/snapshots/public.json';
+
+const garden = (snapshot as any).research?.garden ?? { nodes: [], edges: [] };
+const nodes: any[] = garden.nodes;
+const edges: any[] = garden.edges;
+
+// Layout constants (match prototype garden-v2.html)
+const COLW = 200, X0 = 40, NW = 158, NH = 54, ROW = 82, TOP = 30, SVG_H = 720;
+const maxTier: number = nodes.reduce((m: number, n: any) => Math.max(m, n.tier ?? 0), 0);
+const SVG_W = X0 + (maxTier + 1) * COLW + 20;
+
+// Group by tier
+const byTier = new Map<number, any[]>();
+for (const n of nodes) {
+  const t: number = n.tier ?? 0;
+  if (!byTier.has(t)) byTier.set(t, []);
+  byTier.get(t)!.push(n);
+}
+
+// Barycenter sort within each tier; assign slots + positions
+const slotMap: Record<string, number> = {};
+const posMap: Record<string, { x: number; y: number }> = {};
+
+const tiers = [...byTier.keys()].sort((a, b) => a - b);
+for (const t of tiers) {
+  let col = [...byTier.get(t)!];
+  if (t > 0) {
+    col.sort((a: any, b: any) => {
+      const sa = (a.requires ?? []).map((r: string) => slotMap[r]).filter((v: any) => v != null);
+      const sb = (b.requires ?? []).map((r: string) => slotMap[r]).filter((v: any) => v != null);
+      const ma = sa.length ? sa.reduce((s: number, v: number) => s + v, 0) / sa.length : 0;
+      const mb = sb.length ? sb.reduce((s: number, v: number) => s + v, 0) / sb.length : 0;
+      return ma - mb;
+    });
+  }
+  const colH = col.length * ROW;
+  const y0 = TOP + (SVG_H - TOP - colH) / 2;
+  col.forEach((n: any, i: number) => {
+    slotMap[n.id] = i;
+    posMap[n.id] = { x: X0 + t * COLW, y: y0 + i * ROW };
+  });
+}
+
+// Build edge draw data
+interface EdgeDraw { from: string; to: string; d: string; isUnlock: boolean; }
+const edgeData: EdgeDraw[] = (edges.map((e: any) => {
+  const a = posMap[e.from], b = posMap[e.to];
+  if (!a || !b) return null;
+  const x1 = a.x + NW, y1 = a.y + NH / 2;
+  const x2 = b.x,       y2 = b.y + NH / 2;
+  const mx = (x1 + x2) / 2;
+  const fromN = nodes.find((n: any) => n.id === e.from);
+  const toN   = nodes.find((n: any) => n.id === e.to);
+  const isUnlock = fromN?.state === 'validated' && toN?.state === 'available';
+  return { from: e.from, to: e.to, d: `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`, isUnlock };
+}).filter(Boolean)) as EdgeDraw[];
+
+function groupColor(g: string): string {
+  const m: Record<string, string> = {
+    A: 'var(--warn)', B: 'var(--info)', C: 'var(--success)',
+    D: 'var(--accent)', E: 'var(--danger)', F: 'var(--muted)',
+  };
+  return m[g] ?? 'var(--muted)';
+}
+
+// Children map for mobile "unlocks" hint
+const childrenMap: Record<string, string[]> = {};
+for (const n of nodes) {
+  for (const req of (n.requires ?? [])) {
+    (childrenMap[req] ??= []).push(n.id);
+  }
+}
+
+// Tier sections for mobile view (sorted by slot within each tier)
+const tierSections = tiers.map(t => ({
+  tier: t,
+  nodes: [...byTier.get(t)!].sort((a: any, b: any) => (slotMap[a.id] ?? 0) - (slotMap[b.id] ?? 0)),
+}));
+
+const stateCount = {
+  validated: nodes.filter((n: any) => n.state === 'validated').length,
+  watching:  nodes.filter((n: any) => n.state === 'watching').length,
+  available: nodes.filter((n: any) => n.state === 'available').length,
+  locked:    nodes.filter((n: any) => n.state === 'locked').length,
+};
+
+// Serialise lightweight node list for client-side focus interaction
+const nodesJs = nodes.map((n: any) => ({ id: n.id, requires: n.requires ?? [] }));
+---
+
+<TerminalLayout title="Research Garden — AGENTICOS">
+  <main id="main-content" class="garden-frame">
+    <header class="garden-mast">
+      <div class="mast-row">
+        <h2 class="mast-title"><span class="tilde">~</span>/research/garden</h2>
+        <div class="mast-meta">
+          <span><b>{stateCount.validated}</b> validated</span>
+          <span><b>{stateCount.watching}</b> watching</span>
+          <span><b>{stateCount.available}</b> available</span>
+          <span><b>{stateCount.locked}</b> locked</span>
+        </div>
+      </div>
+      <p class="garden-lede">
+        Skill-tree of research learnings. Validating a hypothesis unlocks its dependents.
+        Click any node to trace its prerequisite chain and what it unlocks.
+      </p>
+    </header>
+
+    <div class="cols">
+      <!-- Explainer panel -->
+      <aside class="explainer" aria-label="How to read the garden">
+        <section>
+          <h2>How to read an ID</h2>
+          <div class="row"><span class="codechip">A1</span> validated — letter = group, number = order</div>
+          <div class="row"><span class="codechip">W1</span> <b class="warn-text">watching</b> — under test (n/threshold)</div>
+          <div class="row"><span class="codechip">H1</span> <b class="info-text">hypothesis</b> — backlog idea (score)</div>
+        </section>
+        <section>
+          <h2>State</h2>
+          <div class="row"><span class="dot dot-validated"></span> ✓ validated (earned)</div>
+          <div class="row"><span class="dot dot-watching"></span> ◐ watching (n/threshold)</div>
+          <div class="row"><span class="dot dot-available"></span> + available (prereqs met)</div>
+          <div class="row"><span class="dot dot-locked"></span> 🔒 locked (prereq unmet)</div>
+        </section>
+        <section>
+          <h2>Groups (colour chip)</h2>
+          <div class="row"><span class="dot" style="background:var(--warn)"></span> A · Cost &amp; economics</div>
+          <div class="row"><span class="dot" style="background:var(--info)"></span> B · Estimation</div>
+          <div class="row"><span class="dot" style="background:var(--success)"></span> C · Process</div>
+          <div class="row"><span class="dot" style="background:var(--accent)"></span> D · Tools, skills &amp; agents</div>
+          <div class="row"><span class="dot" style="background:var(--danger)"></span> E · Measurement honesty</div>
+          <div class="row"><span class="dot" style="background:var(--muted)"></span> F · Surprises</div>
+        </section>
+        <section>
+          <h2>Why one tree?</h2>
+          <p class="why-note">Dependencies cross groups (E1→A1, B1 needs E1+A1). Per-group trees would sever those edges. Group is an overlay, not a partition.</p>
+        </section>
+      </aside>
+
+      <!-- SVG scene (wide viewport) -->
+      <div class="scene scene-svg" role="region" aria-label="Skill-tree dependency graph">
+        <div class="hint" id="garden-hint">click a node to focus · click empty space to reset</div>
+        <svg
+          id="garden"
+          width={SVG_W}
+          height={SVG_H}
+          role="img"
+          aria-label="Research skill-tree dependency graph"
+        >
+          <!-- Edges first (behind nodes) -->
+          {edgeData.map(e => (
+            <path
+              class={`edge${e.isUnlock ? ' edge-unlock' : ''}`}
+              d={e.d}
+              data-from={e.from}
+              data-to={e.to}
+            />
+          ))}
+
+          <!-- Nodes -->
+          {nodes.map((n: any) => {
+            const p = posMap[n.id];
+            if (!p) return null;
+            const gc = groupColor(n.group);
+            const glyph = n.state === 'validated' ? ' ✓' : n.state === 'locked' ? ' 🔒' : n.state === 'watching' ? ' ◐' : '';
+            const meterW = n.state === 'watching' ? Math.round(96 * (n.n / Math.max(n.threshold, 1))) : 0;
+            return (
+              <g
+                class={`node n-${n.state}`}
+                transform={`translate(${p.x},${p.y})`}
+                tabindex="0"
+                role="button"
+                aria-label={`${n.id} ${n.title} (${n.state})`}
+                data-id={n.id}
+              >
+                <rect class="box" width={NW} height={NH} />
+                {n.state === 'validated' && <rect class="accentbar" width="3" height={NH} />}
+                <rect x={NW - 16} y="6" width="10" height="10" style={`fill:${gc}`} />
+                <text class="gchip" x={NW - 30} y="15" text-anchor="end" style={`fill:${gc}`}>{n.group}</text>
+                <text class="id" x="8" y="15">{n.id}{glyph}</text>
+                <text class="title" x="8" y="31">{n.title}</text>
+                {n.state === 'watching' && <text class="meta" x="8" y="47">n={n.n}/{n.threshold}</text>}
+                {n.state === 'watching' && <rect class="meterbg" x="54" y="41" width="96" height="6" />}
+                {n.state === 'watching' && <rect class="meterfill" x="54" y="41" width={meterW} height="6" />}
+                {(n.state === 'available' || n.state === 'locked') && (
+                  <text class="meta" x="8" y="47">{n.state === 'locked' ? 'locked · ' : '+'}score {n.score}</text>
+                )}
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+
+      <!-- Mobile tier-stacked view (narrow viewport) -->
+      <div class="mobile-tiers" aria-label="Research skill-tree, tier sections">
+        {tierSections.map(({ tier, nodes: tnodes }) => (
+          <section class="mobile-tier" aria-label={`Tier ${tier} nodes`}>
+            <h3 class="tier-label">tier {tier}</h3>
+            <div class="tier-nodes">
+              {tnodes.map((n: any) => {
+                const unlocks = childrenMap[n.id] ?? [];
+                const gc = groupColor(n.group);
+                return (
+                  <div class={`mobile-node mn-${n.state}`} aria-label={`${n.id} ${n.title} (${n.state})`}>
+                    <div class="mn-header">
+                      <span class="mn-id">{n.id}{n.state === 'validated' ? ' ✓' : n.state === 'locked' ? ' 🔒' : n.state === 'watching' ? ' ◐' : ''}</span>
+                      <span class="mn-chip" style={`background:${gc};color:var(--bg)`}>{n.group}</span>
+                    </div>
+                    <div class="mn-title">{n.title}</div>
+                    {n.state === 'watching' && <div class="mn-meta">n={n.n}/{n.threshold}</div>}
+                    {(n.state === 'available' || n.state === 'locked') && <div class="mn-meta">score {n.score}</div>}
+                    {unlocks.length > 0 && <div class="mn-unlocks">unlocks → {unlocks.join(', ')}</div>}
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        ))}
+      </div>
+    </div>
+  </main>
+</TerminalLayout>
+
+<script define:vars={{ nodesJs }}>
+  const kids = {};
+  nodesJs.forEach(n => n.requires.forEach(r => { (kids[r] = kids[r] || []).push(n.id); }));
+  const reqMap = Object.fromEntries(nodesJs.map(n => [n.id, n.requires]));
+
+  const svgEl = document.getElementById('garden');
+  const hintEl = document.getElementById('garden-hint');
+  if (!svgEl || !hintEl) return;
+
+  function walk(id, map, acc) {
+    (map[id] || []).forEach(x => { if (!acc.has(x)) { acc.add(x); walk(x, map, acc); } });
+    return acc;
+  }
+
+  function focusNode(id) {
+    const lit = new Set([id]);
+    walk(id, reqMap, lit);
+    walk(id, kids, lit);
+    svgEl.classList.add('focusing');
+    svgEl.querySelectorAll('.node').forEach(g => g.classList.toggle('lit', lit.has(g.dataset.id)));
+    svgEl.querySelectorAll('.edge').forEach(p => p.classList.toggle('lit', lit.has(p.dataset.from) && lit.has(p.dataset.to)));
+    hintEl.textContent = 'focus: ' + id + ' — ' + (lit.size - 1) + ' connected · click empty space to reset';
+  }
+
+  function reset() {
+    svgEl.classList.remove('focusing');
+    svgEl.querySelectorAll('.node, .edge').forEach(el => el.classList.remove('lit'));
+    hintEl.textContent = 'click a node to focus · click empty space to reset';
+  }
+
+  svgEl.querySelectorAll('.node').forEach(g => {
+    g.addEventListener('click', e => { e.stopPropagation(); focusNode(g.dataset.id); });
+    g.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); focusNode(g.dataset.id); }
+    });
+  });
+  svgEl.addEventListener('click', reset);
+</script>
+
+<style>
+  .garden-frame { padding: var(--space-5); max-width: 100%; }
+  .garden-mast { margin-bottom: var(--space-4); }
+  .mast-row { display: flex; align-items: baseline; gap: var(--space-4); flex-wrap: wrap; margin-bottom: var(--space-1); }
+  .mast-title { font-size: var(--size-lg); font-weight: 600; margin: 0; }
+  .tilde { color: var(--accent); }
+  .mast-meta { display: flex; gap: var(--space-3); color: var(--fg-dim); font-size: var(--size-sm); }
+  .mast-meta b { color: var(--fg); }
+  .garden-lede { color: var(--fg-dim); font-size: var(--size-sm); margin: 0; }
+
+  .cols { display: grid; grid-template-columns: 260px 1fr; gap: var(--space-4); align-items: start; }
+
+  /* Explainer aside */
+  .explainer { border: 1px solid var(--border); background: var(--bg-panel); padding: var(--space-4); font-size: var(--size-sm); }
+  .explainer h2 { font-size: var(--size-sm); text-transform: uppercase; letter-spacing: .08em; color: var(--fg-dim); margin: 0 0 var(--space-2); }
+  .explainer section { margin-bottom: var(--space-4); }
+  .row { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-1); color: var(--fg-dim); }
+  .dot { width: 10px; height: 10px; flex: 0 0 10px; display: inline-block; }
+  .dot-validated { background: var(--bg-elevated); border-left: 3px solid var(--accent); }
+  .dot-watching  { background: var(--bg-elevated); outline: 1px solid var(--warn); }
+  .dot-available { outline: 1px dashed var(--muted); }
+  .dot-locked    { background: #0d0d0d; outline: 1px solid var(--border); }
+  .codechip { display: inline-block; border: 1px solid var(--border-strong); padding: 0 4px; color: var(--fg); }
+  .warn-text { color: var(--warn); }
+  .info-text { color: var(--info); }
+  .why-note { color: var(--muted); margin: 0; }
+
+  /* SVG scene */
+  .scene { border: 1px solid var(--border); background: var(--bg-panel); position: relative; overflow: auto; }
+  .hint { position: absolute; top: 8px; right: 12px; font-size: var(--size-sm); color: var(--muted); pointer-events: none; z-index: 1; }
+
+  /* SVG node + edge styles */
+  svg text { font-family: var(--font-mono); }
+  .node { cursor: pointer; }
+  .node rect.box { transition: opacity var(--motion-base) var(--easing); }
+  .n-validated .box { fill: var(--bg-elevated); stroke: var(--border); }
+  .n-validated .accentbar { fill: var(--accent); }
+  .n-watching .box  { fill: var(--bg-elevated); stroke: var(--warn); }
+  .n-available .box { fill: transparent; stroke: var(--muted); stroke-dasharray: 3 3; }
+  .n-locked .box    { fill: #0d0d0d; stroke: var(--border); }
+  .node .title { fill: var(--fg); font-size: 11px; }
+  .n-available .title, .n-locked .title { fill: var(--muted); }
+  .node .id { fill: var(--fg-dim); font-size: 9px; }
+  .node .meta { font-size: 9px; }
+  .n-validated .meta { fill: var(--success); }
+  .n-watching  .meta { fill: var(--warn); }
+  .n-available .meta { fill: var(--info); }
+  .n-locked    .meta { fill: var(--muted); }
+  .meterbg   { fill: var(--border); }
+  .meterfill { fill: var(--warn); }
+  .gchip { font-size: 9px; font-weight: 600; }
+  .edge { fill: none; stroke: var(--border-strong); stroke-width: 1; transition: opacity var(--motion-base), stroke var(--motion-base); }
+  .edge-unlock { stroke: var(--accent-dim); }
+
+  /* Focus mode */
+  svg.focusing .node,
+  svg.focusing .edge { opacity: .12; }
+  svg.focusing .node.lit,
+  svg.focusing .edge.lit { opacity: 1; }
+  svg.focusing .edge.lit { stroke: var(--accent); stroke-width: 1.5; }
+  .node.lit .box { stroke: var(--accent); }
+
+  /* Mobile tier sections (hidden on wide) */
+  .mobile-tiers { display: none; }
+
+  /* Responsive */
+  @media (max-width: 880px) {
+    .cols { grid-template-columns: 1fr; }
+    .scene-svg { display: none; }
+    .mobile-tiers { display: block; }
+
+    .mobile-tier { margin-bottom: var(--space-4); }
+    .tier-label { font-size: var(--size-sm); text-transform: uppercase; letter-spacing: .08em; color: var(--fg-dim); margin: 0 0 var(--space-2); border-bottom: 1px solid var(--border); padding-bottom: var(--space-1); }
+    .tier-nodes { display: flex; flex-direction: column; gap: var(--space-2); }
+    .mobile-node { border: 1px solid var(--border); background: var(--bg-panel); padding: var(--space-2) var(--space-3); }
+    .mn-validated { border-left: 3px solid var(--accent); }
+    .mn-watching  { border-color: var(--warn); }
+    .mn-available { border-style: dashed; border-color: var(--muted); background: transparent; }
+    .mn-locked    { background: #0d0d0d; opacity: .7; }
+    .mn-header { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-1); }
+    .mn-id { font-size: var(--size-sm); color: var(--fg-dim); }
+    .mn-chip { font-size: 9px; font-weight: 600; padding: 1px 4px; }
+    .mn-title { font-size: var(--size-sm); color: var(--fg); margin-bottom: 2px; }
+    .mn-meta { font-size: var(--size-sm); color: var(--fg-dim); }
+    .mn-unlocks { font-size: var(--size-sm); color: var(--muted); margin-top: 2px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+  }
+</style>

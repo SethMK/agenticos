@@ -10,3 +10,12 @@ logs/*.log
 
 # Vendored external project (open-design clone from S016 design-skill-poc spike, 235M)
 notes/design-skill-poc/open-design-app/
+
+# Playwright
+test-results/
+playwright-report/
+tests/e2e/.cache/
+.playwright-mcp/
+
+# Loose debug screenshots at repo root (keep intentional ones under docs/screenshots/)
+/*.png

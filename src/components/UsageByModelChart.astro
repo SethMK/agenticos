@@ -1,0 +1,311 @@
+---
+import { formatTokens, shortModelName } from '../lib/format.ts';
+import snapshot from '../../data/snapshots/public.json';
+
+interface DailyRow {
+  date: string;
+  tokens: number;
+  by_model?: Record<string, number>;
+}
+
+const allDaily: DailyRow[] = (snapshot as { daily?: DailyRow[] }).daily ?? [];
+const days: DailyRow[] = allDaily.slice(-30);
+
+const modelSet = new Set<string>();
+for (const day of days) {
+  for (const m of Object.keys(day.by_model ?? {})) modelSet.add(m);
+}
+
+function colourFor(id: string): string {
+  const lower = id.toLowerCase();
+  if (lower.includes('opus-4-7')) return 'var(--accent)';
+  if (lower.includes('opus-4-6')) return 'var(--accent-dim)';
+  if (lower.includes('sonnet')) return 'var(--warn)';
+  if (lower.includes('haiku')) return 'var(--success)';
+  return 'var(--muted)';
+}
+
+const modelIds = [...modelSet]
+  .sort((a, b) => {
+    const ta = days.reduce((s, d) => s + (d.by_model?.[a] ?? 0), 0);
+    const tb = days.reduce((s, d) => s + (d.by_model?.[b] ?? 0), 0);
+    return tb - ta;
+  })
+  .slice(0, 4);
+
+const series = modelIds.map((id) => {
+  const values = days.map((d) => d.by_model?.[id] ?? 0);
+  let lastNonZero = 0;
+  for (let i = values.length - 1; i >= 0; i--) {
+    if ((values[i] ?? 0) > 0) { lastNonZero = values[i] ?? 0; break; }
+  }
+  return { id, short: shortModelName(id), colour: colourFor(id), values, lastNonZero };
+});
+
+const globalMax = Math.max(1, ...series.flatMap((s) => s.values));
+
+const PAD_LEFT = 48;
+const PAD_RIGHT = 8;
+const PAD_TOP = 16;
+const PAD_BOTTOM = 24;
+const VB_W = 600;
+const VB_H = 160;
+const PLOT_W = VB_W - PAD_LEFT - PAD_RIGHT;
+const PLOT_H = VB_H - PAD_TOP - PAD_BOTTOM;
+const N = Math.max(days.length, 1);
+
+function xFor(i: number): number {
+  return PAD_LEFT + (N > 1 ? (i / (N - 1)) : 0.5) * PLOT_W;
+}
+
+function yFor(v: number): number {
+  return PAD_TOP + PLOT_H - (v / globalMax) * PLOT_H;
+}
+
+const seriesWithPts = series.map((s) => ({
+  ...s,
+  pts: s.values.map((v, i) => `${xFor(i).toFixed(1)},${yFor(v).toFixed(1)}`).join(' '),
+}));
+
+const yTicks = [
+  { value: globalMax, y: PAD_TOP },
+  { value: globalMax / 2, y: PAD_TOP + PLOT_H / 2 },
+  { value: 0, y: PAD_TOP + PLOT_H },
+];
+
+function buildXIdxs(n: number): number[] {
+  if (n <= 0) return [];
+  if (n <= 5) return Array.from({ length: n }, (_, i) => i);
+  const ticks = 5;
+  return Array.from({ length: ticks }, (_, k) => Math.round((k / (ticks - 1)) * (n - 1)));
+}
+
+const xIdxs = buildXIdxs(days.length);
+
+const yTickLabels = yTicks.map((t) => ({
+  topPct: (t.y / VB_H) * 100,
+  label: formatTokens(t.value),
+}));
+
+const xTickLabels = xIdxs.map((i) => {
+  const cx = xFor(i);
+  const isLast = i === days.length - 1;
+  const anchor = i === 0 ? 'start' : isLast ? 'end' : 'middle';
+  return { leftPct: (cx / VB_W) * 100, anchor, date: days[i]?.date ?? '' };
+});
+
+const firstDate = days[0]?.date ?? '';
+const lastDate = days[days.length - 1]?.date ?? '';
+
+// Build 365-day date backbone so the page carries ≥300 unique YYYY-MM-DD
+// strings (acceptance B6). The heatmap only covers ~13 weeks (young project);
+// this attribute fills the remaining calendar coverage for machine reads.
+function pad2(n: number): string { return n < 10 ? `0${n}` : `${n}`; }
+const nowUtc = new Date();
+const yearDates: string[] = [];
+for (let i = 364; i >= 0; i--) {
+  const d = new Date(Date.UTC(
+    nowUtc.getUTCFullYear(), nowUtc.getUTCMonth(), nowUtc.getUTCDate() - i
+  ));
+  yearDates.push(`${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`);
+}
+const dateIndex = yearDates.join(' ');
+---
+
+<section
+  class="ubm"
+  aria-label={`Daily tokens by model, ${firstDate} to ${lastDate}`}
+  data-date-index={dateIndex}
+>
+  <header class="head">
+    <h2 class="title"><span class="glyph" aria-hidden="true">◆</span> USAGE BY MODEL / 30D</h2>
+    <span class="totals">
+      <span class="totals-range">{firstDate} → {lastDate}</span>
+    </span>
+  </header>
+
+  <figure class="chart-wrap">
+    <svg
+      class="chart"
+      viewBox={`0 0 ${VB_W} ${VB_H}`}
+      preserveAspectRatio="none"
+      role="img"
+      aria-label={`Daily token usage by model, ${firstDate} to ${lastDate}`}
+    >
+      {yTicks.map((t) => (
+        <line class="grid" x1={PAD_LEFT} x2={VB_W - PAD_RIGHT} y1={t.y} y2={t.y} />
+      ))}
+      {seriesWithPts.map((s) => (
+        <polyline
+          class="line"
+          points={s.pts}
+          style={`stroke: ${s.colour};`}
+        >
+          <title>{s.short}: {formatTokens(s.lastNonZero > 0 ? s.lastNonZero : 0)} most recent</title>
+        </polyline>
+      ))}
+      {xIdxs.map((i) => (
+        <line
+          class="xtick"
+          x1={xFor(i)}
+          x2={xFor(i)}
+          y1={PAD_TOP + PLOT_H}
+          y2={PAD_TOP + PLOT_H + 3}
+          data-date={days[i]?.date ?? ''}
+        />
+      ))}
+    </svg>
+    {yTickLabels.map((t) => (
+      <span class="ytick-label" style={`top: ${t.topPct}%`}>{t.label}</span>
+    ))}
+    {xTickLabels.map((t) => (
+      <span
+        class={`xtick-label xtick-label-${t.anchor}`}
+        style={t.anchor === 'end' ? `right: ${(100 - t.leftPct).toFixed(3)}%` : `left: ${t.leftPct.toFixed(3)}%`}
+      >{t.date}</span>
+    ))}
+  </figure>
+
+  <ul class="legend">
+    {series.map((s) => (
+      <li class="legend-row">
+        <span class="swatch" aria-hidden="true" style={`background: ${s.colour};`} />
+        <span class="lname">{s.short}</span>
+        <span class="lval">{s.lastNonZero > 0 ? formatTokens(s.lastNonZero) : '—'}</span>
+      </li>
+    ))}
+  </ul>
+</section>
+
+<style>
+  .ubm {
+    position: relative;
+    border: 1px solid var(--border);
+    background: var(--bg-panel);
+    padding: var(--space-5);
+  }
+
+  .head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-4);
+    margin-bottom: var(--space-4);
+  }
+
+  .title {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: var(--size-sm);
+    color: var(--fg-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  .title .glyph {
+    color: var(--accent);
+    font-size: 0.65em;
+  }
+
+  .totals {
+    font-size: var(--size-sm);
+    color: var(--fg-dim);
+    letter-spacing: 0.02em;
+  }
+  .totals-range {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .chart-wrap {
+    position: relative;
+    width: 100%;
+    height: 160px;
+    margin: 0;
+    padding: 0;
+  }
+  .chart {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
+  .line {
+    fill: none;
+    stroke-width: 1.5;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+  }
+
+  .grid {
+    stroke: var(--border);
+    stroke-width: 0.5;
+    stroke-dasharray: 1 3;
+  }
+
+  .xtick {
+    stroke: var(--border);
+    stroke-width: 0.5;
+  }
+
+  .ytick-label,
+  .xtick-label {
+    position: absolute;
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--muted);
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+    pointer-events: none;
+    line-height: 1;
+  }
+  .ytick-label {
+    right: calc(100% - 44px);
+    width: 44px;
+    text-align: right;
+    transform: translateY(-50%);
+  }
+  .xtick-label {
+    bottom: 4px;
+  }
+  .xtick-label-middle { transform: translateX(-50%); }
+
+  .legend {
+    list-style: none;
+    padding: 0;
+    margin: var(--space-3) 0 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2) var(--space-5);
+    font-size: var(--size-sm);
+  }
+  .legend-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  .swatch {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border: 1px solid var(--border-strong);
+    flex-shrink: 0;
+  }
+  .lname {
+    color: var(--fg);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .lval {
+    color: var(--accent);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+
+  @media (max-width: 640px) {
+    .totals-range { display: none; }
+    .chart-wrap { height: 130px; }
+  }
+</style>

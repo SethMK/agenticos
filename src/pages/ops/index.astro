@@ -14,14 +14,16 @@ import { join } from 'path';
 import TerminalLayout from '../../layouts/TerminalLayout.astro';
 import { requireAuth } from '../../../api/lib/auth.ts';
 import { PLAN_QUOTAS } from '../../../data/pipeline/quotas.ts';
+import AlertBanner from '../../components/AlertBanner.astro';
 
 // Auth guard — return 403 Response if not allowed.
 const denied = requireAuth(Astro.request);
 if (denied) return denied;
 
 // Resolve ops snapshot relative to project root (Astro runs from repo root).
+// OPS_SNAPSHOT_PATH env var overrides default path (used in e2e fixture injection).
 const REPO_ROOT = join(process.cwd());
-const OPS_SNAPSHOT = join(REPO_ROOT, 'data/snapshots/ops.json');
+const OPS_SNAPSHOT = process.env.OPS_SNAPSHOT_PATH || join(REPO_ROOT, 'data/snapshots/ops.json');
 
 interface DailyRow {
   date: string;
@@ -44,6 +46,7 @@ interface OpsSnapshot {
   daily: DailyRow[];
   projects: ProjectRow[];
   totals: Record<string, number>;
+  weekly_quota_project_used_k?: number;
 }
 
 let ops: OpsSnapshot;
@@ -80,6 +83,11 @@ const usedK = Math.round(weeklyUsed / 1000);
 const budgetK = quota.weekly_k;
 const pct = budgetK > 0 ? Math.round((usedK / budgetK) * 100) : 0;
 
+// Alert ratio: prefer explicit weekly_quota_project_used_k from snapshot, else derived usedK.
+const alertRatio = ops.weekly_quota_project_used_k != null
+  ? ops.weekly_quota_project_used_k / budgetK
+  : budgetK > 0 ? usedK / budgetK : 0;
+
 // ── Projects (top 10 by tokens) ─────────────────────────────────────────────
 const topProjects = [...(ops.projects ?? [])]
   .sort((a, b) => b.tokens - a.tokens)
@@ -106,6 +114,8 @@ function fmtUsd(n: number): string {
 ---
 <TerminalLayout title="AGENTICOS — /ops">
   <main id="main-content" aria-label="Ops dashboard">
+
+    <AlertBanner ratio={alertRatio} />
 
     <section class="ops-section" aria-label="Page header">
       <h2 class="section-heading">ops <span class="muted">/ private</span></h2>

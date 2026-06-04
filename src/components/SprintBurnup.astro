@@ -45,6 +45,7 @@ interface SprintRaw {
   planned_work_budget_k?: number;
   planned_must_have_budget_k?: number;
   actual_work_tokens_k_running?: number | null;
+  actual_retro_impl_tokens_k?: number | null;
   must_have_shipped_ids?: string[];
   execution_points?: SprintExecutionPoint[];
 }
@@ -122,8 +123,10 @@ interface ChartView {
   currentWorkK: number;
   pctOfBudget: string;
   overheadEndK: number;
+  retroImplEndK: number;
   workPolyline: string;
   overheadPolyline: string;
+  retroImplPolyline: string;
   refLineY: number;
   workPoints: Array<{ x: number; y: number; timestamp: string; event: string; k: number }>;
   yTicks: Array<{ k: number; svgY: number }>;
@@ -143,9 +146,10 @@ function buildView(opt: SprintOption): ChartView {
 
   const OVERHEAD_FRACTION = 0.5;
   const overheadEndK = plannedBudgetK * OVERHEAD_FRACTION;
+  const retroImplEndK = sprint.actual_retro_impl_tokens_k ?? 0;
 
   const maxWorkK = execution_points.reduce((m, p) => Math.max(m, p.running_sum_k), 0);
-  const rawMaxK = Math.max(plannedBudgetK, maxWorkK, overheadEndK);
+  const rawMaxK = Math.max(plannedBudgetK, maxWorkK, overheadEndK, retroImplEndK);
   const Y_MAX_K = rawMaxK > 0 ? rawMaxK * 1.10 : 400;
 
   const yK = (k: number) => PAD_TOP + PLOT_H * (1 - k / Y_MAX_K);
@@ -177,6 +181,12 @@ function buildView(opt: SprintOption): ChartView {
   }));
   const overheadPolyline = overheadPoints.map(p => `${p.x},${p.y}`).join(' ');
 
+  const retroImplPoints = execution_points.map((_, i) => ({
+    x: xIdx(i, pointCount),
+    y: yK(retroImplEndK * (i / Math.max(pointCount - 1, 1))),
+  }));
+  const retroImplPolyline = retroImplPoints.map(p => `${p.x},${p.y}`).join(' ');
+
   const refLineY = yK(plannedBudgetK);
 
   const currentWorkK = pointCount > 0
@@ -207,8 +217,8 @@ function buildView(opt: SprintOption): ChartView {
     sprintId, milestone, startedAt,
     plannedBudgetK, pointCount, currentWorkK,
     pctOfBudget,
-    overheadEndK,
-    workPolyline, overheadPolyline,
+    overheadEndK, retroImplEndK,
+    workPolyline, overheadPolyline, retroImplPolyline,
     refLineY,
     workPoints,
     yTicks,
@@ -299,6 +309,16 @@ const views: ChartView[] = sprintOptions.map(buildView);
                 </polyline>
               )}
 
+              {v.pointCount > 0 && v.retroImplEndK > 0 && (
+                <polyline
+                  class="retro-impl-line"
+                  points={v.retroImplPolyline}
+                  fill="none"
+                >
+                  <title>retro-impl: {fmtK(v.retroImplEndK)}</title>
+                </polyline>
+              )}
+
               {v.pointCount > 0 && (
                 <polyline
                   class="work-line"
@@ -339,6 +359,10 @@ const views: ChartView[] = sprintOptions.map(buildView);
           <span class="legend-item">
             <span class="legend-swatch legend-overhead"></span>
             overhead (v1 approx)
+          </span>
+          <span class="legend-item">
+            <span class="legend-swatch legend-retro-impl"></span>
+            retro-impl
           </span>
           <span class="legend-item">
             <span class="legend-swatch legend-ref"></span>
@@ -516,6 +540,20 @@ const views: ChartView[] = sprintOptions.map(buildView);
   }
   .overhead-line:hover { opacity: 0.70; }
 
+  .retro-impl-line {
+    stroke: var(--accent);
+    stroke-width: 1.5;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+    stroke-dasharray: 2 4;
+    fill: none;
+    opacity: 0.55;
+    @media (prefers-reduced-motion: no-preference) {
+      transition: opacity var(--motion-fast) var(--easing);
+    }
+  }
+  .retro-impl-line:hover { opacity: 0.75; }
+
   .work-dot {
     fill: var(--accent);
     stroke: var(--bg-panel);
@@ -574,6 +612,13 @@ const views: ChartView[] = sprintOptions.map(buildView);
     border-bottom: 2px dashed var(--accent-dim);
     height: 0;
     margin-bottom: 1px;
+  }
+  .legend-retro-impl {
+    background: transparent;
+    border-bottom: 2px dashed var(--accent);
+    height: 0;
+    margin-bottom: 1px;
+    opacity: 0.55;
   }
   .legend-ref {
     background: transparent;

@@ -1,0 +1,309 @@
+---
+/**
+ * WorkShareCard.astro — S148: windowed toggle (7d/30d/all) + per-day assisted% trend.
+ *
+ * Source: public.json → work_share_7d/30d/all (pre-computed shares) + daily[].work_share
+ * Toggle: CSS radio :checked, zero JS, zero new custom properties.
+ */
+export interface Props {
+  ws7d:  { manual: number; agents: number; skills: number; mcp: number };
+  ws30d: { manual: number; agents: number; skills: number; mcp: number };
+  wsAll: { manual: number; agents: number; skills: number; mcp: number };
+  daily: Array<{ date: string; work_share?: { manual: number; agents: number; skills: number; mcp: number } | null }>;
+}
+
+type WS = { manual: number; agents: number; skills: number; mcp: number };
+const { ws7d, ws30d, wsAll, daily } = Astro.props;
+
+function mkSegs(ws: WS) {
+  return [
+    { key: 'manual', label: 'MANUAL', pct: ws.manual, color: 'var(--fg-dim)' },
+    { key: 'agents', label: 'AGENTS', pct: ws.agents, color: 'var(--accent)' },
+    { key: 'mcp',    label: 'MCP',    pct: ws.mcp,    color: 'var(--accent-dim)' },
+    { key: 'skills', label: 'SKILLS', pct: ws.skills, color: 'var(--muted)' },
+  ];
+}
+
+const windows = [
+  { id: 'ws-w-7d',  slug: '7d',  label: '7D',  data: ws7d },
+  { id: 'ws-w-30d', slug: '30d', label: '30D', data: ws30d },
+  { id: 'ws-w-all', slug: 'all', label: 'ALL', data: wsAll },
+];
+
+// Per-day assisted% for trend sparkline
+const trendData = daily
+  .filter(d => d.work_share != null)
+  .map(d => {
+    const ws = d.work_share!;
+    const total = ws.manual + ws.agents + ws.skills + ws.mcp;
+    const assisted = ws.agents + ws.skills + ws.mcp;
+    return total > 0 ? (assisted / total) * 100 : 0;
+  });
+
+const SVG_W = 200, SVG_H = 28, PAD = 3;
+const tMax = Math.max(...trendData, 1);
+const sparkPts = trendData.length >= 2
+  ? trendData.map((v, i) => {
+      const x = (PAD + (i / (trendData.length - 1)) * (SVG_W - 2 * PAD)).toFixed(1);
+      const y = ((SVG_H - PAD) - (v / tMax) * (SVG_H - 2 * PAD)).toFixed(1);
+      return `${x},${y}`;
+    }).join(' ')
+  : '';
+---
+
+<article class="work-share-card" aria-label="Work share by type">
+  <span class="bracket bracket-tl" aria-hidden="true"></span>
+  <span class="bracket bracket-tr" aria-hidden="true"></span>
+  <span class="bracket bracket-bl" aria-hidden="true"></span>
+  <span class="bracket bracket-br" aria-hidden="true"></span>
+
+  <!-- Radios first — siblings to panels for CSS :checked selectors -->
+  <input type="radio" id="ws-w-7d" name="ws-window" class="ws-radio" checked />
+  <input type="radio" id="ws-w-30d" name="ws-window" class="ws-radio" />
+  <input type="radio" id="ws-w-all" name="ws-window" class="ws-radio" />
+
+  <div class="ws-header">
+    <div class="ws-label">◆ WORK SHARE</div>
+    <div class="ws-tabs" role="tablist" aria-label="Time window">
+      {windows.map(w => (
+        <label for={w.id} class="ws-tab" role="tab">{w.label}</label>
+      ))}
+    </div>
+  </div>
+
+  {windows.map(w => {
+    const segs = mkSegs(w.data);
+    const assisted = (w.data.agents + w.data.skills + w.data.mcp).toFixed(1);
+    return (
+      <div class={`ws-pane ws-pane-${w.slug}`}>
+        <div
+          class="ws-bar"
+          role="img"
+          aria-label={`Work share ${w.label}: manual ${w.data.manual.toFixed(1)}%, agents ${w.data.agents.toFixed(1)}%, mcp ${w.data.mcp.toFixed(1)}%, skills ${w.data.skills.toFixed(1)}%`}
+        >
+          {segs.map(s => (
+            <div
+              class="ws-seg"
+              style={`width:${s.pct}%;background:${s.color};`}
+              data-key={s.key}
+            />
+          ))}
+        </div>
+        <div class="ws-legend">
+          {segs.map(s => (
+            <div class="ws-leg-item">
+              <span class="ws-leg-dot" style={`background:${s.color};`} aria-hidden="true" />
+              <span class="ws-leg-label">{s.label}</span>
+              <span class="ws-leg-pct">{s.pct.toFixed(1)}%</span>
+            </div>
+          ))}
+        </div>
+        <div class="ws-footer">
+          <span class="ws-assisted-label">assisted</span>
+          <span class="ws-assisted-val">{assisted}%</span>
+        </div>
+      </div>
+    );
+  })}
+
+  {sparkPts && (
+    <div class="ws-trend">
+      <span class="ws-trend-label">TREND · ASSISTED %</span>
+      <svg
+        class="ws-spark"
+        viewBox={`0 0 ${SVG_W} ${SVG_H}`}
+        aria-label={`Daily assisted % trend over ${trendData.length} days`}
+        preserveAspectRatio="none"
+      >
+        <polyline
+          points={sparkPts}
+          fill="none"
+          stroke="var(--accent)"
+          stroke-width="1.5"
+          stroke-linejoin="round"
+          stroke-linecap="round"
+        />
+      </svg>
+    </div>
+  )}
+</article>
+
+<style>
+  .ws-radio { display: none; }
+
+  .work-share-card {
+    position: relative;
+    border: 1px solid var(--border);
+    background: var(--bg-panel);
+    padding: var(--space-5);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    transition: background var(--motion-fast) var(--easing);
+  }
+  .work-share-card:hover { background: var(--bg-elevated); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .work-share-card { transition: none; }
+  }
+
+  .bracket {
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    border: 1px solid var(--accent);
+  }
+  .bracket-tl { top: -1px; left: -1px; border-right: 0; border-bottom: 0; }
+  .bracket-tr { top: -1px; right: -1px; border-left: 0; border-bottom: 0; }
+  .bracket-bl { bottom: -1px; left: -1px; border-right: 0; border-top: 0; }
+  .bracket-br { bottom: -1px; right: -1px; border-left: 0; border-top: 0; }
+
+  .ws-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+  }
+
+  .ws-label {
+    font-size: var(--size-sm);
+    color: var(--fg-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+  }
+
+  .ws-tabs {
+    display: flex;
+    gap: var(--space-2);
+  }
+
+  .ws-tab {
+    font-size: var(--size-sm);
+    font-family: var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    cursor: pointer;
+    padding: 1px var(--space-2);
+    border: 1px solid transparent;
+    color: var(--fg-dim);
+    transition: color var(--motion-fast) var(--easing), border-color var(--motion-fast) var(--easing);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .ws-tab { transition: none; }
+  }
+
+  /* Default active: 7d */
+  label[for="ws-w-7d"] { color: var(--accent); border-color: var(--border); }
+
+  /* 30d checked: activate 30d tab */
+  #ws-w-30d:checked ~ .ws-header label[for="ws-w-7d"]  { color: var(--fg-dim); border-color: transparent; }
+  #ws-w-30d:checked ~ .ws-header label[for="ws-w-30d"] { color: var(--accent); border-color: var(--border); }
+
+  /* all checked: activate all tab */
+  #ws-w-all:checked ~ .ws-header label[for="ws-w-7d"]  { color: var(--fg-dim); border-color: transparent; }
+  #ws-w-all:checked ~ .ws-header label[for="ws-w-30d"] { color: var(--fg-dim); border-color: transparent; }
+  #ws-w-all:checked ~ .ws-header label[for="ws-w-all"] { color: var(--accent); border-color: var(--border); }
+
+  /* Panels: 7d visible by default, others hidden */
+  .ws-pane { display: flex; flex-direction: column; gap: var(--space-3); }
+  .ws-pane-30d, .ws-pane-all { display: none; }
+
+  #ws-w-30d:checked ~ .ws-pane-7d  { display: none; }
+  #ws-w-30d:checked ~ .ws-pane-30d { display: flex; }
+  #ws-w-all:checked  ~ .ws-pane-7d  { display: none; }
+  #ws-w-all:checked  ~ .ws-pane-all { display: flex; }
+
+  .ws-bar {
+    display: flex;
+    height: 10px;
+    width: 100%;
+    border-radius: 2px;
+    overflow: hidden;
+    gap: 1px;
+  }
+
+  .ws-seg {
+    min-width: 2px;
+    height: 100%;
+    flex-shrink: 0;
+  }
+
+  .ws-legend {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--space-2) var(--space-4);
+  }
+
+  .ws-leg-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--size-sm);
+    font-family: var(--font-mono);
+  }
+
+  .ws-leg-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 1px;
+    flex-shrink: 0;
+  }
+
+  .ws-leg-label {
+    color: var(--fg-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    flex: 1;
+  }
+
+  .ws-leg-pct {
+    color: var(--fg);
+    font-weight: 600;
+    min-width: 3.5ch;
+    text-align: right;
+  }
+
+  .ws-footer {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-2);
+    padding-top: var(--space-2);
+    border-top: 1px dotted var(--border);
+  }
+
+  .ws-assisted-label {
+    font-size: var(--size-sm);
+    color: var(--fg-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .ws-assisted-val {
+    font-family: var(--font-display);
+    font-size: var(--size-lg);
+    color: var(--accent);
+  }
+
+  .ws-trend {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding-top: var(--space-2);
+    border-top: 1px dotted var(--border);
+  }
+
+  .ws-trend-label {
+    font-size: var(--size-sm);
+    color: var(--fg-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+
+  .ws-spark {
+    width: 100%;
+    height: 28px;
+    display: block;
+    overflow: visible;
+  }
+</style>

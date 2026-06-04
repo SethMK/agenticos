@@ -1,0 +1,182 @@
+---
+/**
+ * HeroCard.astro — S078 V1 Skimmer hero token card.
+ *
+ * Billable basis: total_tokens (in+out), NOT cache-inclusive.
+ * Sparkline = daily[].in_tokens + daily[].out_tokens (last 7 days).
+ * See S078 spec-gate amendment: daily[].tokens is 808M-scale cache-inclusive.
+ */
+export interface Props {
+  totalTokensM: string;          // e.g. "75.0M"
+  deltaLine: string;             // e.g. "+33.2% vs prior 7d"
+  deltaDir: 'up' | 'down' | 'flat';
+  sparkPoints: [number, number][];  // SVG coords, viewBox 0 0 120 32
+  sparkAriaLabel: string;
+}
+
+const { totalTokensM, deltaLine, deltaDir, sparkPoints, sparkAriaLabel } = Astro.props;
+
+const pathD = sparkPoints
+  .map((p, i) => `${i === 0 ? 'M' : 'L'}${p[0]},${p[1]}`)
+  .join(' ');
+---
+<article class="hero-card" aria-label="TOKENS hero stat">
+  <span class="bracket bracket-tl" aria-hidden="true"></span>
+  <span class="bracket bracket-tr" aria-hidden="true"></span>
+  <span class="bracket bracket-bl" aria-hidden="true"></span>
+  <span class="bracket bracket-br" aria-hidden="true"></span>
+
+  <div class="hero-inner">
+    <div class="hero-left">
+      <div class="hero-label">◆ TOKENS</div>
+      <div class="hero-numeral-row">
+        <span class="hero-numeral">{totalTokensM}</span><span class="hero-unit"> tok</span>
+      </div>
+      <div class={`hero-delta hero-delta--${deltaDir}`}>{deltaLine}</div>
+    </div>
+
+    <div class="hero-right">
+      <svg
+        class="spark-svg"
+        viewBox="0 0 120 32"
+        role="img"
+        aria-label={sparkAriaLabel}
+      >
+        <path
+          class="spark-path"
+          d={pathD}
+          fill="none"
+          stroke="var(--accent)"
+          stroke-width="1.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        />
+      </svg>
+      <div class="spark-caption">7d billable</div>
+    </div>
+  </div>
+</article>
+
+<style>
+  .hero-card {
+    position: relative;
+    border: 1px solid var(--border);
+    background: var(--bg-panel);
+    padding: var(--space-5);
+    min-height: 11rem;
+    transition: background var(--motion-fast) var(--easing);
+  }
+  .hero-card:hover { background: var(--bg-elevated); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .hero-card { transition: none; }
+  }
+
+  .bracket {
+    position: absolute;
+    width: 12px;
+    height: 12px;
+    border: 1px solid var(--accent);
+  }
+  .bracket-tl { top: -1px; left: -1px; border-right: 0; border-bottom: 0; }
+  .bracket-tr { top: -1px; right: -1px; border-left: 0; border-bottom: 0; }
+  .bracket-bl { bottom: -1px; left: -1px; border-right: 0; border-top: 0; }
+  .bracket-br { bottom: -1px; right: -1px; border-left: 0; border-top: 0; }
+
+  .hero-inner {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: var(--space-5);
+    height: 100%;
+  }
+
+  .hero-left {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .hero-label {
+    font-size: var(--size-sm);
+    color: var(--fg-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    margin-bottom: var(--space-3);
+  }
+
+  .hero-numeral-row {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: nowrap;
+  }
+
+  .hero-numeral {
+    font-family: var(--font-display);
+    font-size: 6rem;
+    line-height: 0.9;
+    color: var(--accent);
+    letter-spacing: -0.03em;
+    white-space: nowrap;
+  }
+
+  .hero-unit {
+    font-family: var(--font-mono);
+    font-size: var(--size-lg);
+    color: var(--fg-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    align-self: flex-end;
+    margin-bottom: 0.35em;
+  }
+
+  .hero-delta {
+    font-size: var(--size-md);
+    margin-top: var(--space-3);
+    font-family: var(--font-mono);
+  }
+  .hero-delta--up   { color: var(--accent); }
+  .hero-delta--down { color: var(--accent-dim); }
+  .hero-delta--flat { color: var(--fg-dim); }
+
+  .hero-right {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: var(--space-2);
+    flex-shrink: 0;
+  }
+
+  .spark-svg {
+    width: 140px;
+    height: 40px;
+    display: block;
+    overflow: visible;
+  }
+
+  .spark-caption {
+    font-size: var(--size-sm);
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  /* Draw-on animation: only fires when motion is permitted */
+  @media (prefers-reduced-motion: no-preference) {
+    .spark-path {
+      stroke-dasharray: 300;
+      stroke-dashoffset: 300;
+      animation: spark-draw 1.2s ease-out forwards;
+    }
+  }
+
+  @keyframes spark-draw {
+    to { stroke-dashoffset: 0; }
+  }
+
+  @media (max-width: 640px) {
+    .hero-numeral { font-size: 2.25rem; }
+    .spark-svg { width: 80px; height: 26px; }
+  }
+</style>

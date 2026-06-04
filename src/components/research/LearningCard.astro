@@ -1,0 +1,104 @@
+---
+import EvidenceBadge from './EvidenceBadge.astro';
+
+interface Evidence {
+  n: number;
+  sprints?: string[];
+  stories?: string[];
+}
+interface Props {
+  id: string;
+  group: string;
+  title: string;
+  claim: string;
+  practice?: string;
+  evidence: Evidence;
+  severity?: string;
+  selected?: boolean;
+}
+const { id, group, title, claim, practice, evidence, selected = false } = Astro.props;
+---
+
+<article
+  class:list={['research-card', 'card-validated', { 'card-selected': selected }]}
+  data-id={id}
+  data-state="validated"
+  data-group={group}
+  tabindex="0"
+  role="button"
+  aria-pressed={selected ? 'true' : 'false'}
+>
+  <div class="card-top">
+    <span class="card-title">{title}</span>
+    <span class="card-chip"><b>{group}</b></span>
+  </div>
+  <p class="card-claim">{claim}</p>
+  {practice && <p class="card-practice">{practice}</p>}
+  <div class="card-ev">
+    <EvidenceBadge n={evidence.n} sprints={evidence.sprints} stories={evidence.stories} />
+  </div>
+</article>
+
+<style>
+  .research-card {
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--border-strong);
+    background: var(--bg-panel);
+    padding: var(--space-3) var(--space-4);
+    cursor: pointer;
+    border-radius: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+  .research-card:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+  .card-validated {
+    border-left-color: var(--accent);
+  }
+  .card-selected {
+    background: var(--bg-elevated);
+    border-color: var(--border-strong);
+  }
+  .card-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: var(--space-3);
+  }
+  .card-title {
+    font-weight: 600;
+    font-size: var(--size-md);
+    color: var(--fg);
+  }
+  .card-chip {
+    display: inline-block;
+    border: 1px solid var(--border-strong);
+    color: var(--fg-dim);
+    font-size: var(--size-sm);
+    padding: 0 var(--space-2);
+    line-height: 1.6;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .card-chip b {
+    color: var(--fg);
+  }
+  .card-claim {
+    color: var(--fg-dim);
+    font-size: var(--size-sm);
+    margin: 0;
+    line-height: var(--leading-base);
+  }
+  .card-practice {
+    color: var(--muted);
+    font-size: var(--size-sm);
+    margin: 0;
+    font-style: italic;
+  }
+  .card-ev {
+    margin-top: var(--space-1);
+  }
+</style>

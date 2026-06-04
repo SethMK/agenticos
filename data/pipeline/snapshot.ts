@@ -23,17 +23,21 @@ import { createHash } from "node:crypto";
 import { redact } from "./redact";
 import { loadSubscriptions } from "./subscriptions";
 import { PLAN_QUOTAS } from "./quotas";
+import { ResearchSchema } from "./research.schema";
 
 // ---------- types ----------
 
 type ParsedRow = {
   ts: string;
+  session_id: string;
   project: string;
   model: string;
   input_tokens: number;
   output_tokens: number;
   cache_creation_input_tokens: number;
   cache_read_input_tokens: number;
+  // S117: work-share attribution — derived from msg.content[] tool_use names
+  category: 'manual' | 'agents' | 'skills' | 'mcp';
 };
 
 type AggregateRow = {
@@ -202,6 +206,7 @@ async function listJsonlFiles(root: string): Promise<string[]> {
 async function parseFile(path: string, sink: (row: ParsedRow) => void): Promise<void> {
   // S019: walk up path segments looking for a `-Users-*-Projects-*` ancestor so nested
   // sub-agent JSONLs attribute their tokens to the parent project.
+  const session_id = basename(path, ".jsonl");
   const segments = path.split("/");
   const projectsRe = /^-Users-.*-Projects-.*$/;
   let project = basename(dirname(path));
@@ -215,6 +220,9 @@ async function parseFile(path: string, sink: (row: ParsedRow) => void): Promise<
   const decoder = new TextDecoder();
   let buf = "";
   let lineNo = 0;
+  // S121 secondary: track preceding Skill/mcp__ tool_use so subsequent no-tool_use
+  // assistant turns (up to the next tool_use or user message) inherit that bucket.
+  let pendingCategory: ParsedRow['category'] | null = null;
   const handleLine = (line: string) => {
     lineNo++;
     if (!line) return;
@@ -225,6 +233,8 @@ async function parseFile(path: string, sink: (row: ParsedRow) => void): Promise<
       process.stderr.write(`warn: parse error ${path}:${lineNo} ${e?.message ?? "unknown"}\n`);
       return;
     }
+    // User turns mark a context boundary — clear any pending span.
+    if (obj?.type === 'user') { pendingCategory = null; return; }
     if (obj?.type !== "assistant") return;
     const msg = obj.message;
     if (!msg || typeof msg !== "object") return;
@@ -233,14 +243,39 @@ async function parseFile(path: string, sink: (row: ParsedRow) => void): Promise<
     if (msg.model === "<synthetic>") return;
     const usage = msg.usage;
     if (!usage || typeof usage !== "object") return;
+    // S117+S121: categorize by tool usage; S121 secondary spans; S121 primary sidechain override.
+    // Priority: isSidechain > Agent > Skill > mcp__ > pending-span > manual.
+    let category: ParsedRow['category'] = 'manual';
+    if (Array.isArray(msg.content)) {
+      let hasAgent = false, hasSkill = false, hasMcp = false, hasOtherTool = false;
+      for (const block of msg.content) {
+        if (block?.type !== 'tool_use' || typeof block.name !== 'string') continue;
+        const n: string = block.name;
+        if (n === 'Agent') { hasAgent = true; break; }
+        if (n === 'Skill') hasSkill = true;
+        else if (n.startsWith('mcp__')) hasMcp = true;
+        else hasOtherTool = true;
+      }
+      if (hasAgent) { category = 'agents'; pendingCategory = null; }
+      else if (hasSkill) { category = 'skills'; pendingCategory = 'skills'; }
+      else if (hasMcp) { category = 'mcp'; pendingCategory = 'mcp'; }
+      else if (hasOtherTool) { pendingCategory = null; }
+      else if (pendingCategory !== null) { category = pendingCategory; }
+    } else if (pendingCategory !== null) {
+      category = pendingCategory;
+    }
+    // S121 primary: sidechain entries are agent work regardless of tool_use content.
+    if (obj.isSidechain === true) category = 'agents';
     sink({
       ts: typeof obj.timestamp === "string" ? obj.timestamp : "",
+      session_id,
       project,
       model: typeof msg.model === "string" ? msg.model : "",
       input_tokens: num(usage.input_tokens),
       output_tokens: num(usage.output_tokens),
       cache_creation_input_tokens: num(usage.cache_creation_input_tokens),
       cache_read_input_tokens: num(usage.cache_read_input_tokens),
+      category,
     });
   };
   // @ts-ignore — async iteration over Bun stream
@@ -607,6 +642,10 @@ type PublicSnapshotTotals = {
   tokens_cache_read: number;
   tokens_cache_creation: number;
   message_count: number;
+  // S115: cumulative billable tokens (input + output) as of 7 days before the
+  // snapshot anchor date — the real 7-day baseline for the S078 hero sparkline.
+  // null when the dataset is younger than 7 days (no bucket predates the cutoff).
+  tokens_7d_ago: number | null;
   total_subscription: number;
   subscription_currency: string;
   current_plan: string;
@@ -633,6 +672,15 @@ type PublicSnapshotTotals = {
   current_session_start: string | null;    // ISO-8601 timestamp of session's first entry; null if no entry in last 24h
   current_session_id: string;             // ISO date prefix of current_session_start (e.g. "2026-05-22"); "" when null
   current_session_pct: number;            // float 0–100, two decimal places, relative to weekly_quota_total_k * 1000
+  // S117: work-share attribution buckets (input+output tokens, matching total_tokens base)
+  manual_tokens_share: number;
+  agents_tokens_share: number;
+  skills_tokens_share: number;
+  mcp_tokens_share: number;
+  manual_tokens_k: number;
+  agents_tokens_k: number;
+  skills_tokens_k: number;
+  mcp_tokens_k: number;
   quota_snapshot_at: string;              // ISO-8601 timestamp when the pipeline ran
 };
 
@@ -651,14 +699,21 @@ type SnapshotCounts = {
   mcp_servers: number;
   wiki_pages: number;
   notebooklm: number;
+  sessions: number;
+  active_days: number;
+  total_days_in_range: number;
   counts_trend_7d: CountsTrend7d;
   top_skills: string[];
   top_agents: string[];
   top_mcp_servers: string[];
 };
 
-type DailyEntry = { date: string; tokens: number; usd: number; messages: number; in_tokens: number; out_tokens: number };
-type ModelEntry = { model: string; tokens: number; usd: number; rows: number };
+// S123: by_model keys are model IDs; values = input+output+cache_creation+cache_read (matches daily.tokens).
+// Shape: daily[].by_model{ <model_id>: tokens } — chosen over top-level models_daily[] because the
+// 4-line chart walks daily[] for x-axis dates and can key into by_model directly, no cross-join.
+// S147: work_share = per-day in+out token counts by category (raw, not shares). Populated from ParsedRow[].
+type DailyEntry = { date: string; tokens: number; usd: number; messages: number; in_tokens: number; out_tokens: number; by_model: Record<string, number>; work_share: { manual: number; agents: number; skills: number; mcp: number } };
+type ModelEntry = { model: string; tokens: number; tokens_input: number; tokens_output: number; tokens_cache_read: number; tokens_cache_creation: number; usd: number; rows: number };
 type ProjectEntry = { name: string; tokens: number; usd: number; rows: number };
 
 function rowTokens(r: PricedRow): number {
@@ -696,6 +751,130 @@ function buildTotals(rows: PricedRow[]): SnapshotTotals {
   // Stabilise floating-point USD sum so re-runs produce byte-identical output.
   t.total_usd = Math.round(t.total_usd * 1_000_000) / 1_000_000;
   return t;
+}
+
+// S117: work-share attribution — four buckets derived from ParsedRow.category.
+// Tokens base: input + output only (matches total_tokens definition, excludes cache).
+// manual = residual (entries with no tool_use), NOT a synthetic zero-fill.
+function buildWorkShare(parsed: ParsedRow[]): {
+  manual_tokens_k: number;
+  agents_tokens_k: number;
+  skills_tokens_k: number;
+  mcp_tokens_k: number;
+  manual_tokens_share: number;
+  agents_tokens_share: number;
+  skills_tokens_share: number;
+  mcp_tokens_share: number;
+  _raw_total: number;
+} {
+  let manual = 0, agents = 0, skills = 0, mcp = 0;
+  for (const r of parsed) {
+    const t = r.input_tokens + r.output_tokens;
+    switch (r.category) {
+      case 'agents': agents += t; break;
+      case 'skills': skills += t; break;
+      case 'mcp': mcp += t; break;
+      default: manual += t; break;
+    }
+  }
+  const total = manual + agents + skills + mcp;
+  const pct = (n: number): number => total === 0 ? 0 : Math.round((n / total) * 10000) / 100;
+  return {
+    manual_tokens_k: Math.round(manual / 1000),
+    agents_tokens_k: Math.round(agents / 1000),
+    skills_tokens_k: Math.round(skills / 1000),
+    mcp_tokens_k: Math.round(mcp / 1000),
+    manual_tokens_share: pct(manual),
+    agents_tokens_share: pct(agents),
+    skills_tokens_share: pct(skills),
+    mcp_tokens_share: pct(mcp),
+    _raw_total: total,
+  };
+}
+
+// S120: per-project work-share — same four category buckets as buildWorkShare, grouped by project.
+type WorkShareBucket = {
+  manual_tokens_k: number;
+  agents_tokens_k: number;
+  skills_tokens_k: number;
+  mcp_tokens_k: number;
+  manual_tokens_share: number;
+  agents_tokens_share: number;
+  skills_tokens_share: number;
+  mcp_tokens_share: number;
+};
+
+function categoryBuckets(): { manual: number; agents: number; skills: number; mcp: number } {
+  return { manual: 0, agents: 0, skills: 0, mcp: 0 };
+}
+
+function bucketToShare(b: { manual: number; agents: number; skills: number; mcp: number }): WorkShareBucket {
+  const total = b.manual + b.agents + b.skills + b.mcp;
+  const pct = (n: number): number => total === 0 ? 0 : Math.round((n / total) * 10000) / 100;
+  return {
+    manual_tokens_k: Math.round(b.manual / 1000),
+    agents_tokens_k: Math.round(b.agents / 1000),
+    skills_tokens_k: Math.round(b.skills / 1000),
+    mcp_tokens_k: Math.round(b.mcp / 1000),
+    manual_tokens_share: pct(b.manual),
+    agents_tokens_share: pct(b.agents),
+    skills_tokens_share: pct(b.skills),
+    mcp_tokens_share: pct(b.mcp),
+  };
+}
+
+function addToCategory(
+  b: { manual: number; agents: number; skills: number; mcp: number },
+  category: ParsedRow['category'],
+  tokens: number,
+): void {
+  switch (category) {
+    case 'agents': b.agents += tokens; break;
+    case 'skills': b.skills += tokens; break;
+    case 'mcp': b.mcp += tokens; break;
+    default: b.manual += tokens; break;
+  }
+}
+
+// PUBLIC: keyed by WEEKLY_QUOTA_PROJECT_DIRS suffixes (already-public constants, no raw names in public.json).
+// dirs are matched longest-first so "-AgenticOS-PMO" is not mis-assigned to the "-AgenticOS" bucket.
+function buildWorkShareByDir(parsed: ParsedRow[], dirs: string[]): Record<string, WorkShareBucket> {
+  const sortedDirs = [...dirs].sort((a, b) => b.length - a.length);
+  const raw = new Map<string, { manual: number; agents: number; skills: number; mcp: number }>();
+  for (const dir of dirs) raw.set(dir, categoryBuckets());
+
+  for (const r of parsed) {
+    const t = r.input_tokens + r.output_tokens;
+    for (const dir of sortedDirs) {
+      if (r.project.includes(dir)) {
+        addToCategory(raw.get(dir)!, r.category, t);
+        break;
+      }
+    }
+  }
+
+  const result: Record<string, WorkShareBucket> = {};
+  for (const dir of dirs) result[dir] = bucketToShare(raw.get(dir)!);
+  return result;
+}
+
+// OPS: full per-project array with canonical project names. Not exposed in public.json.
+function buildWorkShareByProject(
+  parsed: ParsedRow[],
+): Array<{ project: string } & WorkShareBucket> {
+  const map = new Map<string, { manual: number; agents: number; skills: number; mcp: number }>();
+  for (const r of parsed) {
+    const t = r.input_tokens + r.output_tokens;
+    let b = map.get(r.project);
+    if (!b) { b = categoryBuckets(); map.set(r.project, b); }
+    addToCategory(b, r.category, t);
+  }
+  return Array.from(map.entries())
+    .map(([project, b]) => ({ project, ...bucketToShare(b) }))
+    .sort((a, b) =>
+      (b.manual_tokens_k + b.agents_tokens_k + b.skills_tokens_k + b.mcp_tokens_k) -
+      (a.manual_tokens_k + a.agents_tokens_k + a.skills_tokens_k + a.mcp_tokens_k),
+    );
 }
 
 // S076: all-time project-scoped token totals — mirrors buildTotals but filtered to AgenticOS rows only.
@@ -857,22 +1036,128 @@ function buildSessionQuota(
   };
 }
 
-function buildDaily(rows: PricedRow[]): DailyEntry[] {
+// S039: session + streak metrics computed from ParsedRow[] (post-<synthetic>-filter, post-worktree-dedup).
+function buildSessionMetrics(
+  parsed: ParsedRow[],
+  now: Date,
+): {
+  counts_sessions: number;
+  counts_active_days: number;
+  counts_total_days_in_range: number;
+  session_metrics: {
+    longest_session_minutes: number;
+    most_active_day: string;
+    longest_streak_days: number;
+    current_streak_days: number;
+  };
+} {
+  const valid = parsed.filter((r) => r.ts && r.ts.length >= 10);
+
+  const counts_sessions = new Set<string>(valid.map((r) => r.session_id)).size;
+
+  const activeDatesSet = new Set<string>(valid.map((r) => r.ts.slice(0, 10)));
+  const activeDates = Array.from(activeDatesSet).sort();
+  const counts_active_days = activeDates.length;
+
+  let counts_total_days_in_range = 0;
+  if (activeDates.length >= 2) {
+    const first = new Date(activeDates[0]! + "T00:00:00Z");
+    const last = new Date(activeDates[activeDates.length - 1]! + "T00:00:00Z");
+    counts_total_days_in_range = Math.round((last.getTime() - first.getTime()) / 86_400_000) + 1;
+  } else if (activeDates.length === 1) {
+    counts_total_days_in_range = 1;
+  }
+
+  // longest_session_minutes: max(last_ts − first_ts) per session_id
+  const sessionBounds = new Map<string, { min: number; max: number }>();
+  for (const r of valid) {
+    const t = new Date(r.ts).getTime();
+    if (Number.isNaN(t)) continue;
+    const b = sessionBounds.get(r.session_id);
+    if (!b) { sessionBounds.set(r.session_id, { min: t, max: t }); }
+    else { if (t < b.min) b.min = t; if (t > b.max) b.max = t; }
+  }
+  let longest_session_minutes = 0;
+  for (const b of sessionBounds.values()) {
+    const mins = Math.round((b.max - b.min) / 60_000);
+    if (mins > longest_session_minutes) longest_session_minutes = mins;
+  }
+
+  // most_active_day: day with highest tokens_input + tokens_output
+  const dayTokens = new Map<string, number>();
+  for (const r of valid) {
+    const d = r.ts.slice(0, 10);
+    dayTokens.set(d, (dayTokens.get(d) ?? 0) + r.input_tokens + r.output_tokens);
+  }
+  let most_active_day = "";
+  let maxDayTokens = -1;
+  for (const [d, t] of dayTokens) {
+    if (t > maxDayTokens) { maxDayTokens = t; most_active_day = d; }
+  }
+
+  // streaks
+  let longest_streak_days = 0;
+  if (activeDates.length > 0) {
+    let streak = 1;
+    for (let i = 1; i < activeDates.length; i++) {
+      const diffDays = Math.round(
+        (new Date(activeDates[i]! + "T00:00:00Z").getTime() -
+         new Date(activeDates[i - 1]! + "T00:00:00Z").getTime()) / 86_400_000,
+      );
+      if (diffDays === 1) { streak++; } else { if (streak > longest_streak_days) longest_streak_days = streak; streak = 1; }
+    }
+    if (streak > longest_streak_days) longest_streak_days = streak;
+  }
+
+  // current_streak: consecutive days with activity ending at today (pipeline runtime date)
+  const todayStr = now.toISOString().slice(0, 10);
+  let current_streak_days = 0;
+  let checkDate = new Date(todayStr + "T00:00:00Z");
+  while (activeDatesSet.has(checkDate.toISOString().slice(0, 10))) {
+    current_streak_days++;
+    checkDate = new Date(checkDate.getTime() - 86_400_000);
+  }
+
+  return {
+    counts_sessions,
+    counts_active_days,
+    counts_total_days_in_range,
+    session_metrics: {
+      longest_session_minutes,
+      most_active_day,
+      longest_streak_days,
+      current_streak_days,
+    },
+  };
+}
+
+function buildDaily(
+  rows: PricedRow[],
+  workShareByDate: Map<string, { manual: number; agents: number; skills: number; mcp: number }>,
+): DailyEntry[] {
   const map = new Map<string, DailyEntry>();
   for (const r of rows) {
     let d = map.get(r.date);
     if (!d) {
-      d = { date: r.date, tokens: 0, usd: 0, messages: 0, in_tokens: 0, out_tokens: 0 };
+      d = { date: r.date, tokens: 0, usd: 0, messages: 0, in_tokens: 0, out_tokens: 0, by_model: {}, work_share: { manual: 0, agents: 0, skills: 0, mcp: 0 } };
       map.set(r.date, d);
     }
-    d.tokens += rowTokens(r);
+    const t = rowTokens(r);
+    d.tokens += t;
     d.in_tokens += r.input_tokens;
     d.out_tokens += r.output_tokens;
     d.usd += r.usd;
     d.messages += r.message_count;
+    // S123: accumulate per-model tokens in the same pass; no second JSONL walk.
+    d.by_model[r.model] = (d.by_model[r.model] ?? 0) + t;
   }
   const arr = Array.from(map.values()).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
-  for (const d of arr) d.usd = Math.round(d.usd * 1_000_000) / 1_000_000;
+  for (const d of arr) {
+    d.usd = Math.round(d.usd * 1_000_000) / 1_000_000;
+    // S147: merge per-day category buckets from ParsedRow[] (in+out tokens only).
+    const ws = workShareByDate.get(d.date);
+    if (ws) d.work_share = { ...ws };
+  }
   return arr;
 }
 
@@ -881,12 +1166,19 @@ function buildModels(rows: PricedRow[]): ModelEntry[] {
   for (const r of rows) {
     let m = map.get(r.model);
     if (!m) {
-      m = { model: r.model, tokens: 0, usd: 0, rows: 0 };
+      m = { model: r.model, tokens: 0, tokens_input: 0, tokens_output: 0, tokens_cache_read: 0, tokens_cache_creation: 0, usd: 0, rows: 0 };
       map.set(r.model, m);
     }
-    m.tokens += rowTokens(r);
+    m.tokens_input += r.input_tokens;
+    m.tokens_output += r.output_tokens;
+    m.tokens_cache_read += r.cache_read_input_tokens;
+    m.tokens_cache_creation += r.cache_creation_input_tokens;
     m.usd += r.usd;
     m.rows += 1;
+  }
+  for (const m of map.values()) {
+    // S037: tokens = input + output, matching totals.total_tokens definition (excludes cache tokens; cache-inclusive sum is ~100x larger).
+    m.tokens = m.tokens_input + m.tokens_output;
   }
   const arr = Array.from(map.values()).sort((a, b) => b.tokens - a.tokens);
   for (const m of arr) m.usd = Math.round(m.usd * 1_000_000) / 1_000_000;
@@ -912,6 +1204,66 @@ function buildProjects(
   const arr = Array.from(map.values()).sort((a, b) => b.tokens - a.tokens);
   for (const p of arr) p.usd = Math.round(p.usd * 1_000_000) / 1_000_000;
   return arr;
+}
+
+// S147: per-day category bucket accumulator — mirrors buildWorkShare but keyed by date (ts.slice(0,10)).
+// Tokens base: input + output (matching total_tokens definition). category from ParsedRow.
+// Reuses categoryBuckets() + addToCategory() helpers defined above.
+function buildDailyWorkShare(
+  parsed: ParsedRow[],
+): Map<string, { manual: number; agents: number; skills: number; mcp: number }> {
+  const map = new Map<string, { manual: number; agents: number; skills: number; mcp: number }>();
+  for (const r of parsed) {
+    if (!r.ts || r.ts.length < 10) continue;
+    const date = r.ts.slice(0, 10);
+    let b = map.get(date);
+    if (!b) { b = categoryBuckets(); map.set(date, b); }
+    addToCategory(b, r.category, r.input_tokens + r.output_tokens);
+  }
+  return map;
+}
+
+// S147: window-aggregate work-share from daily[] entries.
+// Reuses cutoff-date pattern from S038 (anchor-based, not now-based). cutoff=undefined = all time.
+// Reuses bucketToShare() to produce the same WorkShareBucket shape as buildWorkShare().
+function buildWorkShareWindow(daily: DailyEntry[], cutoff?: string): WorkShareBucket {
+  const b = categoryBuckets();
+  for (const d of daily) {
+    if (cutoff !== undefined && d.date < cutoff) continue;
+    b.manual += d.work_share.manual;
+    b.agents += d.work_share.agents;
+    b.skills += d.work_share.skills;
+    b.mcp += d.work_share.mcp;
+  }
+  return bucketToShare(b);
+}
+
+// ---------- S115: tokens_7d_ago ----------
+//
+// Cumulative billable tokens (input + output, matching totals.total_tokens) as
+// of 7 days before the snapshot anchor date. Anchor = most recent daily bucket
+// (not the system clock) for reproducibility, mirroring buildCountsTrend7d. The
+// baseline is taken as-of the latest EXISTING daily bucket whose date is ≤
+// (anchor − 7d) — nearest earlier real bucket, never a synthetic zero-fill or
+// fabricated date. Returns null when no bucket predates the cutoff (dataset
+// younger than 7 days). Reuses the priced daily[] series; does not re-walk JSONL.
+function computeTokens7dAgo(daily: DailyEntry[]): number | null {
+  if (daily.length === 0) return null;
+  const lastDate = daily[daily.length - 1]!.date;
+  const cutoff = new Date(new Date(lastDate + "T00:00:00Z").getTime() - 7 * 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+  // daily is sorted oldest→newest (buildDaily). Cumulate billable (in + out)
+  // for every bucket on or before the cutoff date; asOf tracks the source
+  // bucket actually used, proving the value lands on a real daily[] entry.
+  let cumulative = 0;
+  let asOf: string | null = null;
+  for (const d of daily) {
+    if (d.date > cutoff) break;
+    cumulative += d.in_tokens + d.out_tokens;
+    asOf = d.date;
+  }
+  return asOf === null ? null : cumulative;
 }
 
 // ---------- S025: counts_trend_7d ----------
@@ -982,6 +1334,144 @@ function buildCountsTrend7d(
     agents: messageTrend,
     mcp_servers: messageTrend,
   };
+}
+
+// ---------- S164: per-sprint token breakdown ----------
+
+type SprintTokenEntry = {
+  sprint_id: string;
+  // total_k = all 4 token types; by_model/by_category/by_token_type each sum to total_k.
+  total_k: number;
+  // quota_k = input+output+cache_creation (S133 quota basis, cache_read excluded).
+  // Used for drift_pct and weekly_window_share_pct to match buildWeeklyQuota methodology.
+  quota_k: number;
+  by_model: Record<string, number>;
+  by_category: { manual: number; agents: number; skills: number; mcp: number };
+  by_token_type: { input: number; output: number; cache_creation: number; cache_read: number };
+  drift_pct: number | null;
+  measurement_flag: string | null;
+  weekly_window_share_pct: number;
+  noisy: boolean;
+};
+
+// S164: Window parsed rows over each closed sprint's [started_at, ended_at) interval,
+// project-filtered to AgenticOS rows (-AgenticOS-PMO or -AgenticOS).
+// total_k = all 4 token types so by_model / by_category / by_token_type each sum to total_k.
+// noisy=true when measurement_flag ≠ "snapshot-delta-clean" OR sprint wall < 30 min (S133 L5).
+function buildSprintTokens(
+  parsed: ParsedRow[],
+  closedSprints: any[],
+  weeklyQuotaTotalK: number,
+): SprintTokenEntry[] {
+  const agosRows = parsed.filter(
+    (r) =>
+      r.ts &&
+      r.ts.length >= 10 &&
+      (r.project.includes("-AgenticOS-PMO") || r.project.includes("-AgenticOS")),
+  );
+
+  const result: SprintTokenEntry[] = [];
+
+  for (const sprint of closedSprints) {
+    const sprintId: string = sprint.sprint_id;
+    const startedAt: string = sprint.started_at;
+    const endedAt: string = sprint.ended_at;
+    if (!sprintId || !startedAt || !endedAt) continue;
+
+    const startTs = new Date(startedAt).getTime();
+    const endTs = new Date(endedAt).getTime();
+    if (Number.isNaN(startTs) || Number.isNaN(endTs)) continue;
+
+    const actualWallMin = num(sprint.actual_wall_clock_min);
+    const actualTotalK: number | null =
+      typeof sprint.actual_total_tokens_k === "number" ? sprint.actual_total_tokens_k : null;
+    const measurementFlag: string | null =
+      typeof sprint.actual_total_measurement === "string" ? sprint.actual_total_measurement : null;
+
+    let inputRaw = 0,
+      outputRaw = 0,
+      cacheCreationRaw = 0,
+      cacheReadRaw = 0;
+    const byModelRaw: Record<string, number> = {};
+    const byCatRaw = { manual: 0, agents: 0, skills: 0, mcp: 0 };
+
+    for (const r of agosRows) {
+      const t = new Date(r.ts).getTime();
+      if (Number.isNaN(t) || t < startTs || t >= endTs) continue;
+
+      const rowTotal =
+        r.input_tokens +
+        r.output_tokens +
+        r.cache_creation_input_tokens +
+        r.cache_read_input_tokens;
+      inputRaw += r.input_tokens;
+      outputRaw += r.output_tokens;
+      cacheCreationRaw += r.cache_creation_input_tokens;
+      cacheReadRaw += r.cache_read_input_tokens;
+
+      byModelRaw[r.model] = (byModelRaw[r.model] ?? 0) + rowTotal;
+
+      switch (r.category) {
+        case "agents": byCatRaw.agents += rowTotal; break;
+        case "skills": byCatRaw.skills += rowTotal; break;
+        case "mcp": byCatRaw.mcp += rowTotal; break;
+        default: byCatRaw.manual += rowTotal; break;
+      }
+    }
+
+    const totalRaw = inputRaw + outputRaw + cacheCreationRaw + cacheReadRaw;
+    const total_k = Math.round(totalRaw / 1000);
+    // quota_k = S133 basis (input+output+cache_creation, cache_read excluded) — used for drift/share.
+    const quota_k = Math.round((inputRaw + outputRaw + cacheCreationRaw) / 1000);
+
+    const by_model: Record<string, number> = {};
+    for (const [m, tok] of Object.entries(byModelRaw)) {
+      by_model[m] = Math.round(tok / 1000);
+    }
+
+    const by_category = {
+      manual: Math.round(byCatRaw.manual / 1000),
+      agents: Math.round(byCatRaw.agents / 1000),
+      skills: Math.round(byCatRaw.skills / 1000),
+      mcp: Math.round(byCatRaw.mcp / 1000),
+    };
+
+    const by_token_type = {
+      input: Math.round(inputRaw / 1000),
+      output: Math.round(outputRaw / 1000),
+      cache_creation: Math.round(cacheCreationRaw / 1000),
+      cache_read: Math.round(cacheReadRaw / 1000),
+    };
+
+    // drift_pct: quota_k (windowed, S133 basis) vs actual_total_tokens_k (PM estimate, same basis).
+    const drift_pct =
+      actualTotalK !== null
+        ? Math.round(((quota_k - actualTotalK) / Math.max(actualTotalK, 1)) * 10000) / 100
+        : null;
+
+    // weekly_window_share_pct: quota_k / weeklyQuotaTotalK (quota-basis apples-to-apples).
+    const weekly_window_share_pct =
+      weeklyQuotaTotalK > 0
+        ? Math.round((quota_k / weeklyQuotaTotalK) * 10000) / 100
+        : 0;
+
+    const noisy = measurementFlag !== "snapshot-delta-clean" || actualWallMin < 30;
+
+    result.push({
+      sprint_id: sprintId,
+      total_k,
+      quota_k,
+      by_model,
+      by_category,
+      by_token_type,
+      drift_pct,
+      measurement_flag: measurementFlag,
+      weekly_window_share_pct,
+      noisy,
+    });
+  }
+
+  return result;
 }
 
 // ---------- atomic write ----------
@@ -1158,11 +1648,34 @@ async function main() {
   ).length;
   const workCount = projectHashes.length - personalCount;
 
+  // S147: per-day work-share map (ParsedRow[] → date → {manual,agents,skills,mcp} raw in+out tokens).
+  const dailyWorkShareMap = buildDailyWorkShare(parsed);
+
   // Build daily series first (needed by buildCountsTrend7d).
-  const daily = buildDaily(priced);
+  const daily = buildDaily(priced, dailyWorkShareMap);
+
+  // S123: attribution-coverage — sum(by_model values) must equal daily.tokens within ±1 per day.
+  {
+    let pass = true;
+    for (const d of daily) {
+      const modelSum = Object.values(d.by_model).reduce((s, v) => s + v, 0);
+      if (Math.abs(modelSum - d.tokens) > 1) {
+        process.stderr.write(`fatal: S123 by_model sum mismatch on ${d.date}: by_model_sum=${modelSum} daily.tokens=${d.tokens}\n`);
+        pass = false;
+      }
+    }
+    if (!pass) process.exit(1);
+    process.stdout.write(`✓ S123 by_model attribution-coverage: ${daily.length} days PASS\n`);
+  }
 
   // S025: 7-day sparkline trend arrays per entity-type.
   const counts_trend_7d = buildCountsTrend7d(priced, daily);
+
+  // S115: real 7-day-ago cumulative billable baseline (input + output).
+  const tokens_7d_ago = computeTokens7dAgo(daily);
+
+  // S039: session + streak metrics — post-<synthetic>-filter, post-worktree-dedup.
+  const sessionMetrics = buildSessionMetrics(parsed, new Date());
 
   const counts: SnapshotCounts = {
     projects: projectHashes.length,
@@ -1172,6 +1685,9 @@ async function main() {
     mcp_servers: mcpServerCount,
     wiki_pages: wikiPages,
     notebooklm: 0,
+    sessions: sessionMetrics.counts_sessions,
+    active_days: sessionMetrics.counts_active_days,
+    total_days_in_range: sessionMetrics.counts_total_days_in_range,
     counts_trend_7d,
     top_skills,
     top_agents,
@@ -1210,6 +1726,85 @@ async function main() {
   };
   await writeAtomic(join(snapshotsDir, "mcp-servers-debug.json"), mcpDebug);
 
+  // Research data — load + Zod-validate; fail pipeline on schema violation.
+  const researchPath = join(repoRoot, "data", "snapshots", "research.json");
+  let research: any;
+  try {
+    const researchFile = Bun.file(researchPath);
+    if (!(await researchFile.exists())) {
+      process.stderr.write(`fatal: research.json not found at ${researchPath}\n`);
+      process.exit(1);
+    }
+    const raw = await researchFile.json();
+    const result = ResearchSchema.safeParse(raw);
+    if (!result.success) {
+      process.stderr.write(`fatal: research.json schema validation failed:\n${result.error.toString()}\n`);
+      process.exit(1);
+    }
+    research = result.data;
+    process.stdout.write(
+      `✓ research.json: ${research.validated.length} validated, ${research.watching.length} watching, ${research.backlog.length} backlog PASS\n`,
+    );
+  } catch (e: any) {
+    process.stderr.write(`fatal: research.json load error: ${e?.message ?? e}\n`);
+    process.exit(1);
+  }
+
+  // S131: Derive research.garden = { nodes[], edges[] }.
+  // state computed per design.md rule; tier = longest DFS depth from root.
+  {
+    const validatedIds = new Set<string>((research.validated as any[]).map((n: any) => n.id));
+
+    const allNodes: any[] = [
+      ...(research.validated as any[]).map((n: any) => ({ ...n, _src: "validated" })),
+      ...(research.watching as any[]).map((n: any) => ({ ...n, _src: "watching" })),
+      ...(research.backlog as any[]).map((n: any) => ({ ...n, _src: "backlog" })),
+    ];
+
+    const catToGroup: Record<string, string> = {
+      data: "E", process: "C", "cost-model": "A", "tool-choice": "D",
+    };
+
+    const nodeMap: Record<string, any> = Object.fromEntries(allNodes.map((n: any) => [n.id, n]));
+
+    function prereqsMet(node: any): boolean {
+      return (node.requires ?? []).every((r: string) => validatedIds.has(r));
+    }
+
+    const tierMemo: Record<string, number> = {};
+    function computeTier(id: string): number {
+      if (id in tierMemo) return tierMemo[id];
+      const node = nodeMap[id];
+      const reqs: string[] = node?.requires ?? [];
+      if (reqs.length === 0) { tierMemo[id] = 0; return 0; }
+      tierMemo[id] = 1 + Math.max(...reqs.map(computeTier));
+      return tierMemo[id];
+    }
+
+    const gardenNodes = allNodes.map((n: any) => {
+      const state =
+        n._src === "validated" ? "validated"
+        : n._src === "watching" ? (prereqsMet(n) ? "watching" : "locked")
+        : (prereqsMet(n) ? "available" : "locked");
+      const tier = computeTier(n.id);
+      const group = n.group ?? catToGroup[n.category] ?? "F";
+      const base: any = { id: n.id, group, title: n.title, state, tier, requires: n.requires ?? [] };
+      if (state === "validated") base.severity = n.severity;
+      if (state === "watching") { base.n = n.n; base.threshold = n.threshold; }
+      if (state === "available" || state === "locked") base.score = n.score ?? 0;
+      return base;
+    });
+
+    const gardenEdges: Array<{ from: string; to: string }> = [];
+    for (const n of gardenNodes) {
+      for (const req of (n.requires as string[])) {
+        gardenEdges.push({ from: req, to: n.id });
+      }
+    }
+
+    (research as any).garden = { nodes: gardenNodes, edges: gardenEdges };
+  }
+
   // PMO merge.
   let pmo: any = {};
   try {
@@ -1242,6 +1837,64 @@ async function main() {
 
   const opsTotals = buildTotals(priced);
   const models = buildModels(priced);
+
+  // S038: windowed totals + models (last 7 / 30 calendar days, anchored to latest daily bucket).
+  // Re-aggregate from priced rows (not daily[].by_model which lacks in/out/cache split).
+  const anchorDate = daily.length > 0 ? daily[daily.length - 1]!.date : '';
+  const dateSubtract = (base: string, days: number): string => {
+    if (!base) return base;
+    return new Date(new Date(base + 'T00:00:00Z').getTime() - days * 86_400_000)
+      .toISOString().slice(0, 10);
+  };
+  const cutoff7d = dateSubtract(anchorDate, 6);   // 7-day inclusive window
+  const cutoff30d = dateSubtract(anchorDate, 29);  // 30-day inclusive window
+  const priced7d = priced.filter(r => r.date >= cutoff7d);
+  const priced30d = priced.filter(r => r.date >= cutoff30d);
+  const totals_7d = buildTotals(priced7d);
+  const totals_30d = buildTotals(priced30d);
+  const models_7d = buildModels(priced7d);
+  const models_30d = buildModels(priced30d);
+  process.stdout.write(
+    `✓ S038 windowed: 7d_rows=${priced7d.length} (cutoff ${cutoff7d}) 30d_rows=${priced30d.length} (cutoff ${cutoff30d})\n`,
+  );
+
+  // S147: windowed work-share aggregates — reuse cutoff7d/cutoff30d (anchor-based, S038 pattern).
+  // buildWorkShareWindow() sums daily[].work_share buckets for the window then calls bucketToShare().
+  const work_share_7d = buildWorkShareWindow(daily, cutoff7d);
+  const work_share_30d = buildWorkShareWindow(daily, cutoff30d);
+  const work_share_all = buildWorkShareWindow(daily);
+  // S147: attribution-coverage — shares sum ≈ 100 per non-empty window (tolerance ±0.5).
+  for (const [label, ws] of [['7d', work_share_7d], ['30d', work_share_30d], ['all', work_share_all]] as [string, WorkShareBucket][]) {
+    const totalK = ws.manual_tokens_k + ws.agents_tokens_k + ws.skills_tokens_k + ws.mcp_tokens_k;
+    const sharesSum = ws.manual_tokens_share + ws.agents_tokens_share + ws.skills_tokens_share + ws.mcp_tokens_share;
+    if (totalK > 0 && Math.abs(sharesSum - 100) > 0.5) {
+      process.stderr.write(`fatal: S147 work_share_${label} shares sum ${sharesSum.toFixed(2)} ≠ 100±0.5\n`);
+      process.exit(1);
+    }
+    process.stdout.write(
+      `✓ S147 work_share_${label}: manual=${ws.manual_tokens_share}% agents=${ws.agents_tokens_share}% skills=${ws.skills_tokens_share}% mcp=${ws.mcp_tokens_share}% sum=${sharesSum.toFixed(2)}% PASS\n`,
+    );
+  }
+
+  // S037: attribution-coverage self-check — sum(models[].tokens_input) + sum(models[].tokens_output)
+  // must equal totals.tokens_input + totals.tokens_output within ±1 token.
+  {
+    const modelsIn = models.reduce((s, m) => s + m.tokens_input, 0);
+    const modelsOut = models.reduce((s, m) => s + m.tokens_output, 0);
+    const modelsInOut = modelsIn + modelsOut;
+    const globalsInOut = opsTotals.tokens_input + opsTotals.tokens_output;
+    const drift = Math.abs(modelsInOut - globalsInOut);
+    if (drift > 1) {
+      process.stderr.write(
+        `fatal: S037 model attribution drift: models=${modelsInOut} totals=${globalsInOut} drift=${drift}\n`,
+      );
+      process.exit(1);
+    }
+    process.stdout.write(
+      `attribution-coverage models in+out: PASS (models=${modelsInOut}, totals=${globalsInOut}, drift=${drift})\n`,
+    );
+  }
+
   const generatedAt = new Date().toISOString();
   const now = new Date(generatedAt);
 
@@ -1282,6 +1935,44 @@ async function main() {
   process.stdout.write(
     `attribution-coverage project-vs-global: PASS (project=${weeklyQuota.weekly_quota_project_used_k}k, global=${weeklyQuota.weekly_quota_used_k}k)\n`,
   );
+
+  // S164: per-sprint token breakdown — attach to pmo object before snapshot assembly.
+  {
+    const closedSprints = Array.isArray(pmo?.closed_sprints) ? pmo.closed_sprints : [];
+    const sprintTokens = buildSprintTokens(parsed, closedSprints, weeklyQuota.weekly_quota_total_k);
+    pmo.sprint_tokens = sprintTokens;
+
+    // S164 attribution-coverage self-check: by_model / by_category / by_token_type each sum ≈ total_k.
+    // Rounding tolerance = max(10k, numModelBuckets/2) to accommodate per-bucket rounding.
+    let attrPass = true;
+    for (const s of sprintTokens) {
+      const modelSum = Object.values(s.by_model).reduce((a, b) => a + b, 0);
+      const catSum =
+        s.by_category.manual +
+        s.by_category.agents +
+        s.by_category.skills +
+        s.by_category.mcp;
+      const tokSum =
+        s.by_token_type.input +
+        s.by_token_type.output +
+        s.by_token_type.cache_creation +
+        s.by_token_type.cache_read;
+      const tol = Math.max(10, Object.keys(s.by_model).length);
+      if (
+        Math.abs(modelSum - s.total_k) > tol ||
+        Math.abs(catSum - s.total_k) > tol ||
+        Math.abs(tokSum - s.total_k) > tol
+      ) {
+        process.stderr.write(
+          `warn: S164 attribution-coverage rounding on ${s.sprint_id}: total_k=${s.total_k} model_sum=${modelSum} cat_sum=${catSum} tok_sum=${tokSum}\n`,
+        );
+        attrPass = false;
+      }
+    }
+    process.stdout.write(
+      `✓ S164 sprint_tokens: ${sprintTokens.length} sprints, noisy=${sprintTokens.filter((s) => s.noisy).length}, attribution-coverage ${attrPass ? "PASS" : "WARN"}\n`,
+    );
+  }
 
   // S059: current-session quota fields — computed from raw parsed[] (same source as buildWeeklyQuota).
   const sessionQuota = buildSessionQuota(parsed, now, weeklyQuota.weekly_quota_total_k);
@@ -1342,6 +2033,39 @@ async function main() {
     `attribution-coverage project_total ≤ global_total: PASS (project=${Math.round(projectTotals.project_tokens_total / 1000)}k, global=${Math.round(opsTotals.total_tokens / 1000)}k)\n`,
   );
 
+  // S117: work-share attribution — four token buckets from ParsedRow.category.
+  const workShare = buildWorkShare(parsed);
+  // attribution-coverage: sum of four raw buckets must equal global in+out within 0.1% drift.
+  {
+    const globalInOut = opsTotals.tokens_input + opsTotals.tokens_output;
+    const drift = globalInOut === 0 && workShare._raw_total === 0
+      ? 0
+      : Math.abs(workShare._raw_total - globalInOut) / Math.max(globalInOut, workShare._raw_total, 1);
+    if (drift > 0.001) {
+      process.stderr.write(
+        `fatal: S117 work-share coverage drift ${(drift * 100).toFixed(4)}%: share_total=${workShare._raw_total} global_in_out=${globalInOut}\n`,
+      );
+      process.exit(1);
+    }
+    const sharesSum = workShare.manual_tokens_share + workShare.agents_tokens_share + workShare.skills_tokens_share + workShare.mcp_tokens_share;
+    process.stdout.write(
+      `✓ S117 work-share: manual=${workShare.manual_tokens_share}% agents=${workShare.agents_tokens_share}% skills=${workShare.skills_tokens_share}% mcp=${workShare.mcp_tokens_share}% sum=${sharesSum.toFixed(2)}% coverage_drift=${(drift * 100).toFixed(6)}% PASS\n`,
+    );
+  }
+
+  // S120: per-project work-share — computed from parsed[] (post worktree remap, same source as S117).
+  const workShareByDir = buildWorkShareByDir(parsed, WEEKLY_QUOTA_PROJECT_DIRS);
+  const workShareByProject = buildWorkShareByProject(parsed);
+  // Attribution-coverage log — emit per-dir shares for QA verification.
+  for (const dir of WEEKLY_QUOTA_PROJECT_DIRS) {
+    const d = workShareByDir[dir]!;
+    const sharesSum = d.manual_tokens_share + d.agents_tokens_share + d.skills_tokens_share + d.mcp_tokens_share;
+    process.stdout.write(
+      `✓ S120 work-share dir="${dir}": manual=${d.manual_tokens_share}% agents=${d.agents_tokens_share}% skills=${d.skills_tokens_share}% mcp=${d.mcp_tokens_share}% sum=${sharesSum.toFixed(2)}%\n`,
+    );
+  }
+  process.stdout.write(`✓ S120 work_share_by_project: ${workShareByProject.length} projects\n`);
+
   // S042: public totals — token fields + message_count + subscription fields; NO total_usd.
   const publicTotals: PublicSnapshotTotals = {
     total_tokens: opsTotals.total_tokens,
@@ -1350,6 +2074,8 @@ async function main() {
     tokens_cache_read: opsTotals.tokens_cache_read,
     tokens_cache_creation: opsTotals.tokens_cache_creation,
     message_count: opsTotals.message_count,
+    // S115: cumulative billable baseline as of anchor − 7d (null if dataset < 7d).
+    tokens_7d_ago,
     total_subscription: subscriptionData.total,
     subscription_currency: subscriptionData.currency,
     current_plan: subscriptionData.current_plan,
@@ -1375,6 +2101,15 @@ async function main() {
     current_session_id: sessionQuota.current_session_id,
     current_session_pct: sessionQuota.current_session_pct,
     quota_snapshot_at: sessionQuota.quota_snapshot_at,
+    // S117: work-share attribution buckets
+    manual_tokens_share: workShare.manual_tokens_share,
+    agents_tokens_share: workShare.agents_tokens_share,
+    skills_tokens_share: workShare.skills_tokens_share,
+    mcp_tokens_share: workShare.mcp_tokens_share,
+    manual_tokens_k: workShare.manual_tokens_k,
+    agents_tokens_k: workShare.agents_tokens_k,
+    skills_tokens_k: workShare.skills_tokens_k,
+    mcp_tokens_k: workShare.mcp_tokens_k,
   };
 
   // public.json — redacted names, no project_raw.
@@ -1382,11 +2117,25 @@ async function main() {
   const publicSnapshot = {
     generated_at: generatedAt,
     totals: publicTotals,
+    // S038: windowed token totals (same field shape as totals, sans subscription fields).
+    totals_7d,
+    totals_30d,
     counts,
+    session_metrics: sessionMetrics.session_metrics,
     daily,
     models,
+    // S038: windowed per-model arrays (same entry shape as models).
+    models_7d,
+    models_30d,
     projects: publicProjects,
+    // S120: per-project work-share keyed by quota-dir suffix (already-public constants, no raw names).
+    work_share_by_project_dir: workShareByDir,
+    // S147: windowed work-share aggregates (anchor-based 7d/30d/all; shares sum ≈ 100, manual = residual).
+    work_share_7d,
+    work_share_30d,
+    work_share_all,
     pmo,
+    research,
   };
 
   // ops.json — real names from project_raw, plus mcp_servers_detail in counts.
@@ -1410,6 +2159,8 @@ async function main() {
     daily,
     models,
     projects: opsProjects,
+    // S120: per-project work-share with canonical project names (ops-only, private).
+    work_share_by_project: workShareByProject,
     pmo,
     worktree_dedup: worktreeDedup,
   };

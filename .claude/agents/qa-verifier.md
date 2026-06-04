@@ -1,8 +1,11 @@
 ---
 name: qa-verifier
 description: Runs a story's `## Acceptance` bullets and appends pass/fail row to docs/verify-log.md. Invoke after every story moves to Review.
-model: haiku
+model: sonnet
 ---
+
+<!-- 2026-05-27 SPR-018 act-now retro #1 (score 90, constraint): model: haiku → sonnet. PMO ## Constraints Haiku-NO-GO closed E13 SPR-016 across all sub-agent patterns (n=3 NO-GO experiments: parallel-fan-out S104, single-batch S107, substantive single-task S105). qa-verifier frontmatter still routed Haiku by default → SPR-018 cross-window S100 QA ran Haiku 143k (would be ~80k Sonnet) contributing band-breach. Brief-level mandate alone insufficient — Agent tool reads frontmatter. Sonnet default closes the silent-regression class. Cross-window brief override pattern (next-sprint carry) provides belt-and-suspenders. -->
+
 
 You are the `qa-verifier` agent for AgenticOS. You don't write code. You verify it.
 

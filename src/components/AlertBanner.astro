@@ -1,0 +1,29 @@
+---
+const ALERT_THRESHOLD = 0.8;
+
+interface Props {
+  ratio: number;
+}
+
+const { ratio } = Astro.props;
+const isAbove = ratio >= ALERT_THRESHOLD;
+---
+
+{isAbove && (
+  <div class="alert-banner" data-alert="warning" role="alert" aria-live="assertive">
+    Weekly limit window &gt; 80% used — slow down or top up.
+  </div>
+)}
+
+<style>
+  .alert-banner {
+    border: 1px solid var(--warn);
+    border-left: 3px solid var(--warn);
+    background: var(--bg-elevated);
+    color: var(--warn);
+    font-family: var(--font-mono);
+    font-size: var(--size-sm);
+    padding: var(--space-3) var(--space-5);
+    margin-bottom: var(--space-5);
+  }
+</style>

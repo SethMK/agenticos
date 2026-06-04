@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<!--
+  VARIANT C — MEDIAN-NORMALIZED SCALE + OUTLIER GLYPHS
+  Strategy: Y-axis scales to median(actual)*2.5.
+  Median actual wall-clock across 23 sprints = 35m.
+  Scale cap = 35*2.5 = 87.5m (rounded to 90m for clean ticks).
+  SPR-010 (168m) and SPR-011 (90m) exceed cap.
+  SPR-010 renders as off-scale arrow + numerical label.
+  SPR-020 (113m) also exceeds cap — both flagged.
+  Zero client JS. Pure SVG + inline data.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Variant C — Median-Normalized Scale</title>
+<style>
+  :root {
+    --bg: #0A0A0A;
+    --bg-panel: #111111;
+    --fg: #E6E6E6;
+    --fg-dim: #9A9A9A;
+    --muted: #6B6B6B;
+    --border: #2A2A2A;
+    --accent: #FF6A00;
+    --accent-dim: #B24A00;
+    --danger: #E5484D;
+    --font-mono: "Fira Code", "JetBrains Mono", ui-monospace, monospace;
+  }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    margin: 0;
+    padding: 24px;
+  }
+  .variant-header {
+    border-left: 3px solid var(--accent);
+    padding: 8px 16px;
+    margin-bottom: 24px;
+    background: var(--bg-panel);
+  }
+  .variant-header h1 { margin: 0 0 4px; font-size: 13px; color: var(--accent); text-transform: uppercase; letter-spacing: 0.1em; }
+  .variant-header p { margin: 0; color: var(--fg-dim); font-size: 11px; }
+  section {
+    border: 1px solid var(--border);
+    background: var(--bg-panel);
+    padding: 24px;
+  }
+  .head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
+  .title { margin: 0; font-size: 11px; color: var(--fg-dim); text-transform: uppercase; letter-spacing: 0.14em; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .title .glyph { color: var(--accent); font-size: 0.65em; }
+  .head-meta { font-size: 11px; color: var(--fg-dim); }
+  .count { color: var(--accent); font-weight: 600; }
+  .sep { color: var(--muted); margin: 0 4px; }
+  .chart-wrap { height: 240px; }
+  .chart-svg { display: block; width: 100%; height: 100%; }
+  .legend { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-top: 16px; font-size: 10px; color: var(--fg-dim); letter-spacing: 0.06em; text-transform: uppercase; }
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .legend-swatch { display: inline-block; width: 14px; height: 8px; flex-shrink: 0; }
+  .chart-footer { font-size: 11px; color: var(--fg-dim); margin: 10px 0 0; font-style: italic; }
+</style>
+</head>
+<body>
+
+<div class="variant-header">
+  <h1>◆ Variant C — Median-Normalized Scale + Outlier Glyphs</h1>
+  <p>Y-axis capped at median(actual)×2.5 = 90m. Off-scale sprints render as upward arrow glyphs with numerical labels above the chart. Normal sprints are visible at full resolution. No axis distortion required.</p>
+</div>
+
+<section aria-label="Sprint accuracy time median-normalized variant">
+  <div class="head">
+    <h2 class="title"><span class="glyph" aria-hidden="true">◆</span> ACCURACY (TIME) · MEDIAN-NORM</h2>
+    <div class="head-meta">
+      <span class="count">23</span>
+      <span class="sep">closed sprints</span>
+      <span class="sep">·</span>
+      <span>wall-clock min</span>
+      <span class="sep">·</span>
+      <span>cap = median×2.5 = <span style="color:var(--accent)">90m</span></span>
+    </div>
+  </div>
+
+  <div class="chart-wrap">
+    <!--
+      Y_MAX=90m. PAD_TOP=30 (leave room for outlier labels), PAD_BOTTOM=36, PAD_LEFT=36, PAD_RIGHT=8
+      PLOT_H=240-30-36=174, PLOT_W=556
+      yV(v) = 30 + 174*(1 - min(v,90)/90)
+      yV(0)=204, yV(90)=30, yV(30)=30+174*(1-1/3)=30+116=146, yV(60)=30+174*(1-2/3)=30+58=88
+
+      Off-scale: SPR-010(168m), SPR-011(90m borderline=exactly at cap), SPR-020(113m)
+      SPR-011 actual=90 → exactly at top → y=30 (fine, no clipping needed)
+      SPR-010 actual=168 → clips at 30, needs glyph
+      SPR-020 actual=113 → clips at 30, needs glyph
+
+      slotW=556/23=24.17, barW=7.25, gapOuter=3.63, gapInner=2.42
+      xA(i)=36+24.17*i+3.63, xB(i)=xA(i)+7.25+2.42
+
+      yV values:
+      plan=60: y=88, plan=90: y=30
+      actual:
+        3m:  30+174*0.967=198
+        8m:  30+174*0.911=188
+        13m: 30+174*0.856=179
+        19m: 30+174*0.789=167
+        20m: 30+174*0.778=165
+        22m: 30+174*0.756=162
+        27m: 30+174*0.700=152
+        28m: 30+174*0.689=150
+        32m: 30+174*0.644=142
+        35m: 30+174*0.611=136
+        36m: 30+174*0.600=134
+        37m: 30+174*0.589=132
+        41m: 30+174*0.544=125
+        45m: 30+174*0.500=117
+        59m: 30+174*0.344=90
+        60m: same as plan → 88 (if actual=60 we'd see 88)
+        73m: 30+174*0.189=63
+        90m: 30 (cap exactly)
+        *** > cap: clip to 30 and use glyph ***
+        113m: CLIP → 30, glyph above
+        168m: CLIP → 30, glyph above
+    -->
+    <svg class="chart-svg" viewBox="0 0 600 240" preserveAspectRatio="xMidYMid meet" role="img">
+
+      <!-- Cap line -->
+      <line stroke="#3A3A3A" stroke-width="1" stroke-dasharray="3 2" x1="36" x2="592" y1="30" y2="30"/>
+      <text fill="#6B6B6B" font-family="monospace" font-size="8" x="38" y="28">CAP 90m (median×2.5)</text>
+
+      <!-- Grid lines -->
+      <line stroke="#2A2A2A" stroke-width="0.5" stroke-dasharray="1 3" x1="36" x2="592" y1="204" y2="204"/>
+      <line stroke="#2A2A2A" stroke-width="0.5" stroke-dasharray="1 3" x1="36" x2="592" y1="146" y2="146"/>
+      <line stroke="#2A2A2A" stroke-width="0.5" stroke-dasharray="1 3" x1="36" x2="592" y1="88" y2="88"/>
+
+      <!-- Y ticks -->
+      <text fill="#6B6B6B" font-family="monospace" font-size="9" text-anchor="end" x="32" y="207">0m</text>
+      <text fill="#6B6B6B" font-family="monospace" font-size="9" text-anchor="end" x="32" y="149">30m</text>
+      <text fill="#6B6B6B" font-family="monospace" font-size="9" text-anchor="end" x="32" y="91">60m</text>
+      <text fill="#6B6B6B" font-family="monospace" font-size="9" text-anchor="end" x="32" y="33">90m</text>
+
+      <!-- Median reference line at 35m → y=136 -->
+      <line stroke="#FF6A00" stroke-width="0.75" stroke-dasharray="4 2" x1="36" x2="592" y1="136" y2="136" opacity="0.4"/>
+      <text fill="#FF6A00" font-family="monospace" font-size="7" x="38" y="133" opacity="0.7">med=35m</text>
+
+      <!-- SPR-001: plan=60(y=88), actual=20(y=165) -->
+      <rect fill="#B24A00" x="39.6" y="88" width="7.25" height="116"><title>SPR-001 plan 60m</title></rect>
+      <rect fill="#FF6A00" x="49.3" y="165" width="7.25" height="39"><title>SPR-001 actual 20m</title></rect>
+      <text fill="#6B6B6B" font-family="monospace" font-size="7" text-anchor="middle" x="48.1" y="218">01</text>
+
+      <!-- SPR-002: plan=60, actual=36(y=134) -->
+      <rect fill="#B24A00" x="63.8" y="88" width="7.25" height="116"><title>SPR-002 plan 60m</title></rect>
+      <rect fill="#FF6A00" x="73.5" y="134" width="7.25" height="70"><title>SPR-002 actual 36m</title></rect>
+      <text fill="#6B6B6B" font-family="monospace" font-size="7" text-anchor="middle" x="72.3" y="218">02</text>
+
+      <!-- SPR-003: plan=60, actual=41(y=125) -->
+      <rect fill="#B24A00" x="88.0" y="88" width="7.25" height="116"><title>SPR-003 plan 60m</title></rect>
+      <rect fill="#FF6A00" x="97.7" y="125" width="7.25" height="79"><title>SPR-003 actual 41m</title></rect>
+      <text fill="#6B6B6B" font-family="monospace" font-size="7" text-anchor="middle" x="96.5" y="218">03</text>
+
+      <!-- SPR-004: plan=60, actual=35(y=136) -->
+      <rect fill="#B24A00" x="112.2" y="88" width="7.25" height="116"><title>SPR-004 plan 60m</title></rect>
+      <rect fill="#FF6A00" x="121.9" y="136" width="7.25" height="68"><title>SPR-004 actual 35m</title></rect>
+      <text fill="#6B6B6B" font-family="monospace" font-size="7" text-anchor="middle" x="120.7" y="218">04</text>
+
+      <!-- SPR-005: plan=60, actual=13(y=179) -->
+      <rect fill="#B24A00" x="136.4" y="88" width="7.25" height="116"><title>SPR-005 plan 60m</title></rect>
+      <rect fill="#FF6A00" x="146.1" y="179" width="7.25" height="25"><title>SPR-005 actual 13m</title></rect>
+      <text fill="#6B6B6B" font-family="monospace" font-size="7" text-anchor="middle" x="144.9" y="218">05</text>
+
+      <!-- SPR-006: plan=60, actual=37(y=132) -->
+      <rect fill="#B24A00" x="160.6" y="88" width="7.25" height="116"><title>SPR-006 plan 60m</title></rect>
+      <rect fill="#FF6A00" x="170.3" y="132" width="7.25" height="72"><title>SPR-006 actual 37m</title></rect>
+      <text fill="#6B6B6B" font-family="monospace" font-size="7" text-anchor="middle" x="169.1" y="218">06</text>
+
+      <!-- SPR-007: plan=60, actual=22(y=162) -->
+      <rect fill="#B24A00" x="184.8" y="88" width="7.25" height="116"><title>SPR-007 plan 60m</title></rect>
+      <rect fill="#FF6A00" x="194.5" y="162" width="7.25" height="42"><title>SPR-007 actual 22m</title></rect>
+      <text fill="#6B6B6B" font-family="monospace" font-size="7" text-anchor="middle" x="193.3" y="218">07</text>
+
+      <!-- SPR-008: plan=60, actual=41(y=125) -->
+      <rect fill="#B24A00" x="209.0" y="88" width="7.25" height="116"><title>SPR-008 plan 60m</title></rect>
+      <rect fill="#FF6A00" x="218.7" y="125" width="7.25" height="79"><title>SPR-008 actual 41m</title></rect>
+      <text fill="#6B6B6B" font-family="monospace" font-size="7" text-anchor="middle" x="217.5" y="218">08</text>
+
+      <!-- SPR-009: plan=60, actual=73(y=63) -->
+      <rect fill="#B24A00" x="233.2" y="88" width="7.25" height="116"><title>SPR-009 plan 60m</title></rect>
+      <rect fill="#FF6A00" x="242.9" y="63" width="7.25" height="141"><title>SPR-009 actual 73m</title></rect>
+      <text fill="#6B6B6B" font-family="monospace" font-size="7" text-anchor="middle" x="241.7" y="218">09</text>
+
+      <!-- SPR-010: plan=60, actual=168m CLIPPED → glyph -->
+      <rect fill="#B24A00" x="257.4" y="88" width="7.25" height="116"><title>SPR-010 plan 60m</title></rect>
+      <!-- Clipped bar with danger color + upward clipping indicator -->
+      <rect fill="#E5484D" x="267.1" y="30" width="7.25" height="4" opacity="0.8"><title>SPR-010 actual 168m — off scale</title></rect>
+      <!-- Upward arrow glyph -->
+      <text fill="#E5484D" font-family="monospace" font-size="13" font-weight="700" text-anchor="middle" x="270.7" y="27">↑</text>
+      <text fill="#E5484D" font-family="monospace" font-size="7" font-weight="700" text-anchor="middle" x="270.7" y="15">168m</text>
+      <text fill="#E5484D" font-family="monospace" font-size="6" text-anchor="middle" x="270.7" y="8">2.8×</text>
+      <text fill="#6B6B6B" font-family="monospace" font-size="7" text-anchor="middle" x="265.9" y="218">10</text>
+
+      <!-- SPR-011: plan=60, actual=90m → exactly at cap (y=30) — borderline 1.5× -->
+      <rect fill="#B24A00" x="281.6" y="88" width="7.25" height="116"><title>SPR-011 plan 60m</title></rect>
+      <rect fill="#FF6A00" x="291.3" y="30" width="7.25" height="174"><title>SPR-011 actual 90m · 1.50×</title></rect>
+      <text fill="#6B6B6B" font-family="monospace" font-size="7" text-anchor="middle" x="290.1" y="218">11</text>
+
+      <!-- SPR-012: plan=60, actual=20 -->
+      <rect fill="#B24A00" x="305.8" y="88" width="7.25" height="116"><title>SPR-012 plan 60m</title></rect>
+      <rect fill="#FF6A00" x="315.5" y="165" width="7.25" height="39"><title>SPR-012 actual 20m</title></rect>
+      <text fill="#6B6B6B" font-family="monospace" font-size="7" text-anchor="middle" x="314.3" y="218">12</text>
+
+      <!-- SPR-013: plan=60, actual=8(y=188) -->
+      <rect fill="#B24A00" x="330.0" y="88" width="7.25" height="116"><title>SPR-013 plan 60m</title></rect>
+      <rect fill="#FF6A00" x="339.7" y="188" width="7.25" height="16"><title>SPR-013 actual 8m</title></rect>
+      <text fill="#6B6B6B" font-family="monospace" font-size="7" text-anchor="middle" x="338.5" y="218">13</text>
+
+      <!-- SPR-014: plan=90(y=30), actual=45(y=117) -->
+      <rect fill="#B24A00" x="354.2" y="30" width="7.25" height="174"><title>SPR-014 plan 90m</title></rect>
+      <rect fill="#FF6A00" x="363.9" y="117" width="7.25" height="87"><title>SPR-014 actual 45m</title></rect>
+      <text fill="#6B6B6B" font-family="monospace" font-size="7" text-anchor="middle" x="362.7" y="218">14</text>
+
+      <!-- SPR-015: plan=90, actual=27(y=152) -->
+      <rect fill="#B24A00" x="378.4" y="30" width="7.25" height="174"><title>SPR-015 plan 90m</title></rect>
+      <rect fill="#FF6A00" x="388.1" y="152" width="7.25" height="52"><title>SPR-015 actual 27m</title></rect>
+      <text fill="#6B6B6B" font-family="monospace" font-size="7" text-anchor="middle" x="386.9" y="218">15</text>
+
+      <!-- SPR-016: plan=90, actual=37(y=132) -->
+      <rect fill="#B24A00" x="402.6" y="30" width="7.25" height="174"><title>SPR-016 plan 90m</title></rect>
+      <rect fill="#FF6A00" x="412.3" y="132" width="7.25" height="72"><title>SPR-016 actual 37m</title></rect>
+      <text fill="#6B6B6B" font-family="monospace" font-size="7" text-anchor="middle" x="411.1" y="218">16</text>
+
+      <!-- SPR-017: plan=90, actual=28(y=150) -->
+      <rect fill="#B24A00" x="426.8" y="30" width="7.25" height="174"><title>SPR-017 plan 90m</title></rect>
+      <rect fill="#FF6A00" x="436.5" y="150" width="7.25" height="54"><title>SPR-017 actual 28m</title></rect>
+      <text fill="#6B6B6B" font-family="monospace" font-size="7" text-anchor="middle" x="435.3" y="218">17</text>
+
+      <!-- SPR-018: plan=90, actual=32(y=142) -->
+      <rect fill="#B24A00" x="451.0" y="30" width="7.25" height="174"><title>SPR-018 plan 90m</title></rect>
+      <rect fill="#FF6A00" x="460.7" y="142" width="7.25" height="62"><title>SPR-018 actual 32m</title></rect>
+      <text fill="#6B6B6B" font-family="monospace" font-size="7" text-anchor="middle" x="459.5" y="218">18</text>
+
+      <!-- SPR-019: plan=60, actual=3(y=198) -->
+      <rect fill="#B24A00" x="475.2" y="88" width="7.25" height="116"><title>SPR-019 plan 60m</title></rect>
+      <rect fill="#FF6A00" x="484.9" y="198" width="7.25" height="6"><title>SPR-019 actual 3m</title></rect>
+      <text fill="#6B6B6B" font-family="monospace" font-size="7" text-anchor="middle" x="483.7" y="218">19</text>
+
+      <!-- SPR-020: plan=90, actual=113m CLIPPED → glyph -->
+      <rect fill="#B24A00" x="499.4" y="30" width="7.25" height="174"><title>SPR-020 plan 90m</title></rect>
+      <rect fill="#E5484D" x="509.1" y="30" width="7.25" height="4" opacity="0.8"><title>SPR-020 actual 113m — off scale</title></rect>
+      <text fill="#E5484D" font-family="monospace" font-size="11" font-weight="700" text-anchor="middle" x="512.7" y="27">↑</text>
+      <text fill="#E5484D" font-family="monospace" font-size="7" font-weight="700" text-anchor="middle" x="512.7" y="15">113m</text>
+      <text fill="#E5484D" font-family="monospace" font-size="6" text-anchor="middle" x="512.7" y="8">1.26×</text>
+      <text fill="#6B6B6B" font-family="monospace" font-size="7" text-anchor="middle" x="507.9" y="218">20</text>
+
+      <!-- SPR-021: plan=90, actual=59(y=90) -->
+      <rect fill="#B24A00" x="523.6" y="30" width="7.25" height="174"><title>SPR-021 plan 90m</title></rect>
+      <rect fill="#FF6A00" x="533.3" y="90" width="7.25" height="114"><title>SPR-021 actual 59m</title></rect>
+      <text fill="#6B6B6B" font-family="monospace" font-size="7" text-anchor="middle" x="532.1" y="218">21</text>
+
+      <!-- SPR-022: plan=90, actual=19(y=167) -->
+      <rect fill="#B24A00" x="547.8" y="30" width="7.25" height="174"><title>SPR-022 plan 90m</title></rect>
+      <rect fill="#FF6A00" x="557.5" y="167" width="7.25" height="37"><title>SPR-022 actual 19m</title></rect>
+      <text fill="#6B6B6B" font-family="monospace" font-size="7" text-anchor="middle" x="556.3" y="218">22</text>
+
+      <!-- SPR-023: plan=90, actual=35(y=136) -->
+      <rect fill="#B24A00" x="572.0" y="30" width="7.25" height="174"><title>SPR-023 plan 90m</title></rect>
+      <rect fill="#FF6A00" x="581.7" y="136" width="7.25" height="68"><title>SPR-023 actual 35m</title></rect>
+      <text fill="#6B6B6B" font-family="monospace" font-size="7" text-anchor="middle" x="580.5" y="218">23</text>
+    </svg>
+  </div>
+
+  <div class="legend">
+    <span class="legend-item"><span class="legend-swatch" style="background:#B24A00"></span>plan</span>
+    <span class="legend-item"><span class="legend-swatch" style="background:#FF6A00"></span>actual (in-range)</span>
+    <span class="legend-item"><span class="legend-swatch" style="background:#E5484D"></span>actual (off-scale)</span>
+    <span class="legend-item"><span style="color:#E5484D;font-weight:700">↑ 168m</span> off-scale glyph</span>
+    <span class="legend-item"><span style="color:#FF6A00;opacity:0.7">- - -</span> median=35m</span>
+  </div>
+  <p class="chart-footer">time split estimated proportionally from token split · Y-axis cap = median(actual)×2.5 = 90m</p>
+</section>
+
+</body>
+</html>

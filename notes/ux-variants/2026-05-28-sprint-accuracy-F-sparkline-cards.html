@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<!--
+  VARIANT F — SPARKLINE MINI-CARDS PER SPRINT
+  Strategy: replace single chart with a responsive grid of per-sprint
+  cards. Each card shows:
+    - Sprint ID (SPR-NNN)
+    - A small horizontal bar pair (plan vs actual) or single bar
+    - Overrun glyph if applicable
+    - Actual minutes value
+  Handles outlier natively: each card scales to its own max.
+  Cross-sprint comparison comes from relative bar widths.
+  Scalability: cards wrap naturally; 50 sprints = 50 cards.
+  Zero client JS. Pure HTML + CSS + inline SVG bars.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Variant F — Sparkline Mini-Cards</title>
+<style>
+  :root {
+    --bg: #0A0A0A;
+    --bg-panel: #111111;
+    --fg: #E6E6E6;
+    --fg-dim: #9A9A9A;
+    --muted: #6B6B6B;
+    --border: #2A2A2A;
+    --accent: #FF6A00;
+    --accent-dim: #B24A00;
+    --danger: #E5484D;
+    --font-mono: "Fira Code", "JetBrains Mono", ui-monospace, monospace;
+  }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    margin: 0;
+    padding: 24px;
+  }
+  .variant-header {
+    border-left: 3px solid var(--accent);
+    padding: 8px 16px;
+    margin-bottom: 24px;
+    background: var(--bg-panel);
+  }
+  .variant-header h1 { margin: 0 0 4px; font-size: 13px; color: var(--accent); text-transform: uppercase; letter-spacing: 0.1em; }
+  .variant-header p { margin: 0; color: var(--fg-dim); font-size: 11px; }
+  section {
+    border: 1px solid var(--border);
+    background: var(--bg-panel);
+    padding: 24px;
+  }
+  .head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
+  .title { margin: 0; font-size: 11px; color: var(--fg-dim); text-transform: uppercase; letter-spacing: 0.14em; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .title .glyph { color: var(--accent); font-size: 0.65em; }
+  .head-meta { font-size: 11px; color: var(--fg-dim); }
+  .count { color: var(--accent); font-weight: 600; }
+  .sep { color: var(--muted); margin: 0 4px; }
+  .chart-footer { font-size: 11px; color: var(--fg-dim); margin: 10px 0 0; font-style: italic; }
+
+  /* Card grid */
+  .card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+  }
+  .sprint-card {
+    background: var(--bg-panel);
+    padding: 8px;
+    position: relative;
+  }
+  .sprint-card.overrun {
+    background: #160A0A;
+  }
+  .card-id {
+    font-size: 8px;
+    color: var(--muted);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .overrun .card-id { color: var(--danger); }
+  .bar-row {
+    margin-bottom: 2px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .bar-label {
+    font-size: 7px;
+    color: var(--muted);
+    width: 14px;
+    flex-shrink: 0;
+    text-align: right;
+    letter-spacing: 0.04em;
+  }
+  .bar-track {
+    flex: 1;
+    height: 6px;
+    background: var(--bg);
+    position: relative;
+    overflow: hidden;
+  }
+  .bar-fill {
+    position: absolute;
+    left: 0;
+    top: 0;
+    height: 100%;
+  }
+  .bar-plan .bar-fill { background: var(--accent-dim); }
+  .bar-actual .bar-fill { background: var(--accent); }
+  .overrun .bar-actual .bar-fill { background: var(--danger); }
+  .card-value {
+    font-size: 9px;
+    color: var(--fg);
+    margin-top: 4px;
+    display: flex;
+    align-items: baseline;
+    gap: 3px;
+    justify-content: flex-end;
+  }
+  .card-value .v { color: var(--fg); }
+  .overrun .card-value .v { color: var(--danger); }
+  .card-value .ratio { font-size: 7px; color: var(--muted); }
+  .overrun .card-value .ratio { color: var(--danger); }
+  .overrun-glyph {
+    position: absolute;
+    top: 4px;
+    right: 6px;
+    color: var(--danger);
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1;
+  }
+  .chart-note {
+    font-size: 9px;
+    color: var(--muted);
+    margin-top: 8px;
+    border-top: 1px solid var(--border);
+    padding-top: 6px;
+  }
+</style>
+</head>
+<body>
+
+<div class="variant-header">
+  <h1>◆ Variant F — Sparkline Mini-Cards</h1>
+  <p>One card per sprint. Each card shows plan vs actual as horizontal bar pair scaled to card width. Outliers self-scale; no global y-axis to compress. Overrun cards get danger styling. Scalability: cards wrap naturally to 50+ sprints. Trades temporal flow comparison for individual sprint readability.</p>
+</div>
+
+<section aria-label="Sprint accuracy sparkline cards variant">
+  <div class="head">
+    <h2 class="title"><span class="glyph" aria-hidden="true">◆</span> ACCURACY (TIME) · CARDS</h2>
+    <div class="head-meta">
+      <span class="count">23</span>
+      <span class="sep">closed sprints</span>
+      <span class="sep">·</span>
+      <span>wall-clock min</span>
+    </div>
+  </div>
+
+  <!--
+    Each card: plan_min, actual_min, ratio=actual/plan
+    Bar width % = min(actual/max(plan,actual), 1) * 100 for cross-card context
+    Using global max=168 for all bar widths → shows scale relative to worst case
+    plan_pct = plan/168 * 100, actual_pct = actual/168 * 100
+
+    Data:
+    SPR-001: plan=60,actual=20,ratio=0.33
+    SPR-002: plan=60,actual=36,ratio=0.60
+    SPR-003: plan=60,actual=41,ratio=0.68
+    SPR-004: plan=60,actual=35,ratio=0.58
+    SPR-005: plan=60,actual=13,ratio=0.22
+    SPR-006: plan=60,actual=37,ratio=0.62
+    SPR-007: plan=60,actual=22,ratio=0.37
+    SPR-008: plan=60,actual=41,ratio=0.68
+    SPR-009: plan=60,actual=73,ratio=1.22
+    SPR-010: plan=60,actual=168,ratio=2.80 OVERRUN
+    SPR-011: plan=60,actual=90,ratio=1.50 BORDERLINE
+    SPR-012: plan=60,actual=20,ratio=0.33
+    SPR-013: plan=60,actual=8,ratio=0.13
+    SPR-014: plan=90,actual=45,ratio=0.50
+    SPR-015: plan=90,actual=27,ratio=0.30
+    SPR-016: plan=90,actual=37,ratio=0.41
+    SPR-017: plan=90,actual=28,ratio=0.31
+    SPR-018: plan=90,actual=32,ratio=0.36
+    SPR-019: plan=60,actual=3,ratio=0.05
+    SPR-020: plan=90,actual=113,ratio=1.26
+    SPR-021: plan=90,actual=59,ratio=0.66
+    SPR-022: plan=90,actual=19,ratio=0.21
+    SPR-023: plan=90,actual=35,ratio=0.39
+
+    Global max = 168
+    plan_pct: 60→35.7%, 90→53.6%
+    actual_pct:
+      3→1.8%, 8→4.8%, 13→7.7%, 20→11.9%, 22→13.1%, 27→16.1%,
+      28→16.7%, 32→19.0%, 35→20.8%, 36→21.4%, 37→22.0%, 41→24.4%,
+      45→26.8%, 59→35.1%, 73→43.5%, 90→53.6%, 113→67.3%, 168→100%
+  -->
+
+  <div class="card-grid">
+
+    <!-- SPR-001: plan=60(35.7%), actual=20(11.9%), ratio=0.33 -->
+    <div class="sprint-card">
+      <div class="card-id">SPR-001</div>
+      <div class="bar-row bar-plan">
+        <span class="bar-label">pl</span>
+        <div class="bar-track"><div class="bar-fill" style="width:35.7%"></div></div>
+      </div>
+      <div class="bar-row bar-actual">
+        <span class="bar-label">ac</span>
+        <div class="bar-track"><div class="bar-fill" style="width:11.9%"></div></div>
+      </div>
+      <div class="card-value"><span class="v">20m</span><span class="ratio">0.33×</span></div>
+    </div>
+
+    <!-- SPR-002: plan=60(35.7%), actual=36(21.4%), ratio=0.60 -->
+    <div class="sprint-card">
+      <div class="card-id">SPR-002</div>
+      <div class="bar-row bar-plan"><span class="bar-label">pl</span><div class="bar-track"><div class="bar-fill" style="width:35.7%"></div></div></div>
+      <div class="bar-row bar-actual"><span class="bar-label">ac</span><div class="bar-track"><div class="bar-fill" style="width:21.4%"></div></div></div>
+      <div class="card-value"><span class="v">36m</span><span class="ratio">0.60×</span></div>
+    </div>
+
+    <!-- SPR-003: actual=41(24.4%), ratio=0.68 -->
+    <div class="sprint-card">
+      <div class="card-id">SPR-003</div>
+      <div class="bar-row bar-plan"><span class="bar-label">pl</span><div class="bar-track"><div class="bar-fill" style="width:35.7%"></div></div></div>
+      <div class="bar-row bar-actual"><span class="bar-label">ac</span><div class="bar-track"><div class="bar-fill" style="width:24.4%"></div></div></div>
+      <div class="card-value"><span class="v">41m</span><span class="ratio">0.68×</span></div>
+    </div>
+
+    <!-- SPR-004: actual=35(20.8%), ratio=0.58 -->
+    <div class="sprint-card">
+      <div class="card-id">SPR-004</div>
+      <div class="bar-row bar-plan"><span class="bar-label">pl</span><div class="bar-track"><div class="bar-fill" style="width:35.7%"></div></div></div>
+      <div class="bar-row bar-actual"><span class="bar-label">ac</span><div class="bar-track"><div class="bar-fill" style="width:20.8%"></div></div></div>
+      <div class="card-value"><span class="v">35m</span><span class="ratio">0.58×</span></div>
+    </div>
+
+    <!-- SPR-005: actual=13(7.7%), ratio=0.22 -->
+    <div class="sprint-card">
+      <div class="card-id">SPR-005</div>
+      <div class="bar-row bar-plan"><span class="bar-label">pl</span><div class="bar-track"><div class="bar-fill" style="width:35.7%"></div></div></div>
+      <div class="bar-row bar-actual"><span class="bar-label">ac</span><div class="bar-track"><div class="bar-fill" style="width:7.7%"></div></div></div>
+      <div class="card-value"><span class="v">13m</span><span class="ratio">0.22×</span></div>
+    </div>
+
+    <!-- SPR-006: actual=37(22.0%), ratio=0.62 -->
+    <div class="sprint-card">
+      <div class="card-id">SPR-006</div>
+      <div class="bar-row bar-plan"><span class="bar-label">pl</span><div class="bar-track"><div class="bar-fill" style="width:35.7%"></div></div></div>
+      <div class="bar-row bar-actual"><span class="bar-label">ac</span><div class="bar-track"><div class="bar-fill" style="width:22.0%"></div></div></div>
+      <div class="card-value"><span class="v">37m</span><span class="ratio">0.62×</span></div>
+    </div>
+
+    <!-- SPR-007: actual=22(13.1%), ratio=0.37 -->
+    <div class="sprint-card">
+      <div class="card-id">SPR-007</div>
+      <div class="bar-row bar-plan"><span class="bar-label">pl</span><div class="bar-track"><div class="bar-fill" style="width:35.7%"></div></div></div>
+      <div class="bar-row bar-actual"><span class="bar-label">ac</span><div class="bar-track"><div class="bar-fill" style="width:13.1%"></div></div></div>
+      <div class="card-value"><span class="v">22m</span><span class="ratio">0.37×</span></div>
+    </div>
+
+    <!-- SPR-008: actual=41(24.4%), ratio=0.68 -->
+    <div class="sprint-card">
+      <div class="card-id">SPR-008</div>
+      <div class="bar-row bar-plan"><span class="bar-label">pl</span><div class="bar-track"><div class="bar-fill" style="width:35.7%"></div></div></div>
+      <div class="bar-row bar-actual"><span class="bar-label">ac</span><div class="bar-track"><div class="bar-fill" style="width:24.4%"></div></div></div>
+      <div class="card-value"><span class="v">41m</span><span class="ratio">0.68×</span></div>
+    </div>
+
+    <!-- SPR-009: actual=73(43.5%), ratio=1.22 — above plan but not overrun -->
+    <div class="sprint-card">
+      <div class="card-id">SPR-009</div>
+      <div class="bar-row bar-plan"><span class="bar-label">pl</span><div class="bar-track"><div class="bar-fill" style="width:35.7%"></div></div></div>
+      <div class="bar-row bar-actual"><span class="bar-label">ac</span><div class="bar-track"><div class="bar-fill" style="width:43.5%"></div></div></div>
+      <div class="card-value"><span class="v">73m</span><span class="ratio">1.22×</span></div>
+    </div>
+
+    <!-- SPR-010: actual=168(100%), ratio=2.80 OVERRUN -->
+    <div class="sprint-card overrun">
+      <span class="overrun-glyph" aria-label="overrun">↑</span>
+      <div class="card-id">SPR-010</div>
+      <div class="bar-row bar-plan"><span class="bar-label">pl</span><div class="bar-track"><div class="bar-fill" style="width:35.7%"></div></div></div>
+      <div class="bar-row bar-actual"><span class="bar-label">ac</span><div class="bar-track"><div class="bar-fill" style="width:100%"></div></div></div>
+      <div class="card-value"><span class="v">168m</span><span class="ratio">2.80×</span></div>
+    </div>
+
+    <!-- SPR-011: actual=90(53.6%), ratio=1.50 borderline -->
+    <div class="sprint-card">
+      <div class="card-id">SPR-011</div>
+      <div class="bar-row bar-plan"><span class="bar-label">pl</span><div class="bar-track"><div class="bar-fill" style="width:35.7%"></div></div></div>
+      <div class="bar-row bar-actual"><span class="bar-label">ac</span><div class="bar-track"><div class="bar-fill" style="width:53.6%"></div></div></div>
+      <div class="card-value"><span class="v">90m</span><span class="ratio">1.50×</span></div>
+    </div>
+
+    <!-- SPR-012: actual=20(11.9%), ratio=0.33 -->
+    <div class="sprint-card">
+      <div class="card-id">SPR-012</div>
+      <div class="bar-row bar-plan"><span class="bar-label">pl</span><div class="bar-track"><div class="bar-fill" style="width:35.7%"></div></div></div>
+      <div class="bar-row bar-actual"><span class="bar-label">ac</span><div class="bar-track"><div class="bar-fill" style="width:11.9%"></div></div></div>
+      <div class="card-value"><span class="v">20m</span><span class="ratio">0.33×</span></div>
+    </div>
+
+    <!-- SPR-013: actual=8(4.8%), ratio=0.13 -->
+    <div class="sprint-card">
+      <div class="card-id">SPR-013</div>
+      <div class="bar-row bar-plan"><span class="bar-label">pl</span><div class="bar-track"><div class="bar-fill" style="width:35.7%"></div></div></div>
+      <div class="bar-row bar-actual"><span class="bar-label">ac</span><div class="bar-track"><div class="bar-fill" style="width:4.8%"></div></div></div>
+      <div class="card-value"><span class="v">8m</span><span class="ratio">0.13×</span></div>
+    </div>
+
+    <!-- SPR-014: plan=90(53.6%), actual=45(26.8%), ratio=0.50 -->
+    <div class="sprint-card">
+      <div class="card-id">SPR-014</div>
+      <div class="bar-row bar-plan"><span class="bar-label">pl</span><div class="bar-track"><div class="bar-fill" style="width:53.6%"></div></div></div>
+      <div class="bar-row bar-actual"><span class="bar-label">ac</span><div class="bar-track"><div class="bar-fill" style="width:26.8%"></div></div></div>
+      <div class="card-value"><span class="v">45m</span><span class="ratio">0.50×</span></div>
+    </div>
+
+    <!-- SPR-015: plan=90, actual=27(16.1%), ratio=0.30 -->
+    <div class="sprint-card">
+      <div class="card-id">SPR-015</div>
+      <div class="bar-row bar-plan"><span class="bar-label">pl</span><div class="bar-track"><div class="bar-fill" style="width:53.6%"></div></div></div>
+      <div class="bar-row bar-actual"><span class="bar-label">ac</span><div class="bar-track"><div class="bar-fill" style="width:16.1%"></div></div></div>
+      <div class="card-value"><span class="v">27m</span><span class="ratio">0.30×</span></div>
+    </div>
+
+    <!-- SPR-016: plan=90, actual=37(22.0%), ratio=0.41 -->
+    <div class="sprint-card">
+      <div class="card-id">SPR-016</div>
+      <div class="bar-row bar-plan"><span class="bar-label">pl</span><div class="bar-track"><div class="bar-fill" style="width:53.6%"></div></div></div>
+      <div class="bar-row bar-actual"><span class="bar-label">ac</span><div class="bar-track"><div class="bar-fill" style="width:22.0%"></div></div></div>
+      <div class="card-value"><span class="v">37m</span><span class="ratio">0.41×</span></div>
+    </div>
+
+    <!-- SPR-017: plan=90, actual=28(16.7%), ratio=0.31 -->
+    <div class="sprint-card">
+      <div class="card-id">SPR-017</div>
+      <div class="bar-row bar-plan"><span class="bar-label">pl</span><div class="bar-track"><div class="bar-fill" style="width:53.6%"></div></div></div>
+      <div class="bar-row bar-actual"><span class="bar-label">ac</span><div class="bar-track"><div class="bar-fill" style="width:16.7%"></div></div></div>
+      <div class="card-value"><span class="v">28m</span><span class="ratio">0.31×</span></div>
+    </div>
+
+    <!-- SPR-018: plan=90, actual=32(19.0%), ratio=0.36 -->
+    <div class="sprint-card">
+      <div class="card-id">SPR-018</div>
+      <div class="bar-row bar-plan"><span class="bar-label">pl</span><div class="bar-track"><div class="bar-fill" style="width:53.6%"></div></div></div>
+      <div class="bar-row bar-actual"><span class="bar-label">ac</span><div class="bar-track"><div class="bar-fill" style="width:19.0%"></div></div></div>
+      <div class="card-value"><span class="v">32m</span><span class="ratio">0.36×</span></div>
+    </div>
+
+    <!-- SPR-019: plan=60, actual=3(1.8%), ratio=0.05 -->
+    <div class="sprint-card">
+      <div class="card-id">SPR-019</div>
+      <div class="bar-row bar-plan"><span class="bar-label">pl</span><div class="bar-track"><div class="bar-fill" style="width:35.7%"></div></div></div>
+      <div class="bar-row bar-actual"><span class="bar-label">ac</span><div class="bar-track"><div class="bar-fill" style="width:1.8%"></div></div></div>
+      <div class="card-value"><span class="v">3m</span><span class="ratio">0.05×</span></div>
+    </div>
+
+    <!-- SPR-020: plan=90, actual=113(67.3%), ratio=1.26 — above plan -->
+    <div class="sprint-card">
+      <div class="card-id">SPR-020</div>
+      <div class="bar-row bar-plan"><span class="bar-label">pl</span><div class="bar-track"><div class="bar-fill" style="width:53.6%"></div></div></div>
+      <div class="bar-row bar-actual"><span class="bar-label">ac</span><div class="bar-track"><div class="bar-fill" style="width:67.3%"></div></div></div>
+      <div class="card-value"><span class="v">113m</span><span class="ratio">1.26×</span></div>
+    </div>
+
+    <!-- SPR-021: plan=90, actual=59(35.1%), ratio=0.66 -->
+    <div class="sprint-card">
+      <div class="card-id">SPR-021</div>
+      <div class="bar-row bar-plan"><span class="bar-label">pl</span><div class="bar-track"><div class="bar-fill" style="width:53.6%"></div></div></div>
+      <div class="bar-row bar-actual"><span class="bar-label">ac</span><div class="bar-track"><div class="bar-fill" style="width:35.1%"></div></div></div>
+      <div class="card-value"><span class="v">59m</span><span class="ratio">0.66×</span></div>
+    </div>
+
+    <!-- SPR-022: plan=90, actual=19(11.3%), ratio=0.21 -->
+    <div class="sprint-card">
+      <div class="card-id">SPR-022</div>
+      <div class="bar-row bar-plan"><span class="bar-label">pl</span><div class="bar-track"><div class="bar-fill" style="width:53.6%"></div></div></div>
+      <div class="bar-row bar-actual"><span class="bar-label">ac</span><div class="bar-track"><div class="bar-fill" style="width:11.3%"></div></div></div>
+      <div class="card-value"><span class="v">19m</span><span class="ratio">0.21×</span></div>
+    </div>
+
+    <!-- SPR-023: plan=90, actual=35(20.8%), ratio=0.39 -->
+    <div class="sprint-card">
+      <div class="card-id">SPR-023</div>
+      <div class="bar-row bar-plan"><span class="bar-label">pl</span><div class="bar-track"><div class="bar-fill" style="width:53.6%"></div></div></div>
+      <div class="bar-row bar-actual"><span class="bar-label">ac</span><div class="bar-track"><div class="bar-fill" style="width:20.8%"></div></div></div>
+      <div class="card-value"><span class="v">35m</span><span class="ratio">0.39×</span></div>
+    </div>
+
+  </div>
+
+  <p class="chart-note">bar widths are proportional to global max (168m) · pl=plan min · ac=actual min · ↑=overrun (&gt;1.5× plan) · each card scales to same global reference</p>
+  <p class="chart-footer">time split estimated proportionally from token split</p>
+</section>
+
+</body>
+</html>

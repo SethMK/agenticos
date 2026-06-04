@@ -52,6 +52,8 @@ interface Props {
   title: string;
   footerText?: string;
   ariaLabel: string;
+  windowSize?: number;       // S113: last-N main panel
+  showOverview?: boolean;    // S113: render overview strip + window-rect
 }
 
 const {
@@ -66,12 +68,20 @@ const {
   title,
   footerText,
   ariaLabel,
+  windowSize = 10,
+  showOverview = true,
 } = Astro.props as Props;
 
-const hasSprints = data.length > 0;
+// S113: dual-panel. overviewData = ALL sprints (full history); displayData =
+// last-windowSize sprints when overview is on and history exceeds the window.
+const overviewData = data;
+const overviewActive = showOverview && data.length > windowSize;
+const displayData = overviewActive ? data.slice(-windowSize) : data;
+
+const hasSprints = displayData.length > 0;
 
 // ── Per-sprint extraction + flag ──────────────────────────────────────────
-const sprints = data.map(s => {
+const sprints = displayData.map(s => {
   const a = columnAExtractor(s);
   const b = columnBExtractor(s);
   const aTotal = a.mustK + a.overheadK;
@@ -84,13 +94,25 @@ const sprints = data.map(s => {
   };
 });
 
-const rawMax = sprints.reduce((m, s) => Math.max(m, s.aTotal, s.bTotal), 0);
-const Y_MAX = rawMax > 0 ? rawMax * 1.15 : 100;
+// S112: median-normalized scale. Cap chart at median(actual) × 2.5 so a
+// single outlier sprint doesn't flatten the rest. Y_MAX raised to maxPlan
+// when plans exceed the cap (plans always render fully; only actuals get
+// the off-scale glyph treatment).
+const sortedActuals = sprints
+  .map(s => s.bTotal)
+  .filter(v => v > 0)
+  .sort((a, b) => a - b);
+const medianActual = sortedActuals.length > 0
+  ? sortedActuals[Math.floor(sortedActuals.length / 2)]
+  : 0;
+const Y_CAP = medianActual * 2.5;
+const maxPlan = sprints.reduce((m, s) => Math.max(m, s.aTotal), 0);
+const Y_MAX = Math.max(Y_CAP, maxPlan) || 100;
 
 // ── SVG geometry ──────────────────────────────────────────────────────────
 const VB_W = 600;
 const VB_H = 220;
-const PAD_TOP    = 20;
+const PAD_TOP    = 30;  // S112: room for off-scale glyph above chart
 const PAD_BOTTOM = 48;  // x-axis (sprint id) + "plan/actual" sub-label row
 const PAD_LEFT   = 32;  // y-axis tick labels live in SVG, need room
 const PAD_RIGHT  = 8;
@@ -99,7 +121,8 @@ const PLOT_W = VB_W - PAD_LEFT - PAD_RIGHT;
 const PLOT_H = VB_H - PAD_TOP - PAD_BOTTOM;
 
 function yV(v: number): number {
-  return PAD_TOP + PLOT_H * (1 - v / Y_MAX);
+  const clipped = Math.min(v, Y_MAX);
+  return PAD_TOP + PLOT_H * (1 - clipped / Y_MAX);
 }
 
 const n = sprints.length;
@@ -160,13 +183,74 @@ const bars = sprints.map((s, i) => {
     bOhK: s.b.overheadK,
     ratio: s.ratio,
     isOverrun: s.isOverrun,
+    isOffScale: s.bTotal > Y_MAX,
     slotCenterX: xSlotCenter(i),
   };
 });
 
+const capLineY = yV(Y_CAP);
+const showCapLine = hasSprints && Y_CAP > 0 && Y_CAP < Y_MAX;
+
 const xTickLabelY = VB_H - 30;
 const xSubLabelY  = VB_H - 16;
 const yTickLabelX = PAD_LEFT - 4;
+
+// ── S113: overview strip geometry ─────────────────────────────────────────
+// Compressed proportional bars for ALL N sprints. Own y-scale (rawMax of
+// overview actuals — NOT the main panel's Y_CAP). Static window-rect overlay
+// marks the slots covered by displayData.
+const OV_VB_W = VB_W;
+const OV_VB_H = 50;
+const OV_PAD_LEFT = PAD_LEFT;
+const OV_PAD_RIGHT = PAD_RIGHT;
+const OV_PAD_TOP = 4;
+const OV_PAD_BOTTOM = 6;
+const OV_PLOT_W = OV_VB_W - OV_PAD_LEFT - OV_PAD_RIGHT;
+const OV_PLOT_H = OV_VB_H - OV_PAD_TOP - OV_PAD_BOTTOM;
+const OV_BASELINE_Y = OV_VB_H - OV_PAD_BOTTOM;
+
+const overviewSprints = overviewData.map(s => {
+  const a = columnAExtractor(s);
+  const b = columnBExtractor(s);
+  const aTotal = a.mustK + a.overheadK;
+  const bTotal = b.mustK + b.overheadK;
+  const ratio = aTotal > 0 ? bTotal / aTotal : 0;
+  return { sprint_id: s.sprint_id, aTotal, bTotal, isOverrun: ratio > varianceFlagThreshold };
+});
+const overviewMax = overviewSprints.reduce(
+  (m, s) => Math.max(m, s.aTotal, s.bTotal),
+  0,
+) || 1;
+const ovN = overviewSprints.length;
+const ovSlotW = ovN > 0 ? OV_PLOT_W / ovN : 0;
+const ovBarW  = Math.max(2, Math.min(5, ovSlotW * 0.30));
+const ovGapBetween = Math.max(1, ovSlotW * 0.08);
+
+function ovX(i: number): number {
+  return OV_PAD_LEFT + ovSlotW * i + (ovSlotW - (ovBarW * 2 + ovGapBetween)) / 2;
+}
+function ovBarH(v: number): number {
+  return OV_PLOT_H * (v / overviewMax);
+}
+
+const overviewBars = overviewSprints.map((s, i) => {
+  const planH = ovBarH(s.aTotal);
+  const actH  = ovBarH(s.bTotal);
+  const planX = ovX(i);
+  const actX  = planX + ovBarW + ovGapBetween;
+  return {
+    sprint_id: s.sprint_id,
+    planX, actX, planH, actH,
+    planY: OV_BASELINE_Y - planH,
+    actY:  OV_BASELINE_Y - actH,
+    isOverrun: s.isOverrun,
+  };
+});
+
+// Window-rect: covers the slots [ovN - displayData.length .. ovN - 1].
+const windowStartI = Math.max(0, ovN - displayData.length);
+const windowRectX  = OV_PAD_LEFT + ovSlotW * windowStartI;
+const windowRectW  = ovSlotW * displayData.length;
 ---
 
 <section
@@ -179,8 +263,8 @@ const yTickLabelX = PAD_LEFT - 4;
     </h2>
     {hasSprints && (
       <div class="head-meta">
-        <span class="count">{n}</span>
-        <span class="sep">closed sprint{n === 1 ? '' : 's'}</span>
+        <span class="count">{data.length}</span>
+        <span class="sep">closed sprint{data.length === 1 ? '' : 's'}</span>
         <span class="sep">·</span>
         <span class="axis-meta">{axisLabel}</span>
         <span class="sep">·</span>
@@ -208,8 +292,22 @@ const yTickLabelX = PAD_LEFT - 4;
               />
             ))}
 
+            {showCapLine && (
+              <>
+                <line
+                  class="cap-line"
+                  x1={PAD_LEFT} x2={VB_W - PAD_RIGHT}
+                  y1={capLineY} y2={capLineY}
+                />
+                <text
+                  class="cap-label"
+                  x={PAD_LEFT + 2} y={capLineY - 2}
+                >CAP {fmt(Y_CAP)} (median×2.5)</text>
+              </>
+            )}
+
             {bars.map(b => (
-              <g class="bar-group">
+              <g class="bar-group" data-sprint-id={b.sprint_id}>
                 {/* Column A (plan) — must (bottom) + overhead (top) */}
                 {b.aMustH > 0 && (
                   <rect
@@ -255,11 +353,24 @@ const yTickLabelX = PAD_LEFT - 4;
                   <text
                     class="overrun-glyph"
                     x={b.bX + barW / 2}
-                    y={b.bOhTopY - 4}
+                    y={b.isOffScale ? PAD_TOP - 2 : b.bOhTopY - 4}
                     text-anchor="middle"
                   >
                     ↑
                     <title>{b.sprint_id} overrun · actual {fmt(b.bTotal)} = {b.ratio.toFixed(2)}× plan {fmt(b.aTotal)} (threshold {varianceFlagThreshold}×)</title>
+                  </text>
+                )}
+
+                {/* Off-scale glyph (S112) — actual exceeds Y_MAX; render "↑ NNNm" above cap */}
+                {b.isOffScale && (
+                  <text
+                    class="offscale-glyph"
+                    x={b.bX + barW / 2}
+                    y={PAD_TOP - 12}
+                    text-anchor="middle"
+                  >
+                    ↑ {fmt(b.bTotal)}
+                    <title>{b.sprint_id} actual {fmt(b.bTotal)} — off scale (cap {fmt(Y_CAP)})</title>
                   </text>
                 )}
 
@@ -307,6 +418,58 @@ const yTickLabelX = PAD_LEFT - 4;
     </div>
   </div>
 
+  {overviewActive && (
+    <>
+      <p class="window-caption">showing last {displayData.length} of {data.length} sprints</p>
+      <div class="overview-wrap">
+        <svg
+          class="chart-svg overview-svg"
+          viewBox={`0 0 ${OV_VB_W} ${OV_VB_H}`}
+          preserveAspectRatio="xMidYMid meet"
+          role="img"
+          aria-label={`Overview · all ${data.length} sprints, last ${displayData.length} highlighted`}
+        >
+          {overviewBars.map(b => (
+            <>
+              {b.planH > 0 && (
+                <rect
+                  class="ov-plan"
+                  x={b.planX} y={b.planY}
+                  width={ovBarW} height={b.planH}
+                >
+                  <title>{b.sprint_id} plan {fmt(b.planH * overviewMax / OV_PLOT_H)}</title>
+                </rect>
+              )}
+              {b.actH > 0 && (
+                <rect
+                  class={b.isOverrun ? 'ov-actual ov-actual-overrun' : 'ov-actual'}
+                  x={b.actX} y={b.actY}
+                  width={ovBarW} height={b.actH}
+                >
+                  <title>{b.sprint_id} actual</title>
+                </rect>
+              )}
+            </>
+          ))}
+
+          {/* Static window-rect overlay — marks slots covered by main panel */}
+          <rect
+            class="window-rect"
+            x={windowRectX} y={0}
+            width={windowRectW} height={OV_VB_H}
+          />
+
+          {/* Baseline */}
+          <line
+            class="ov-baseline"
+            x1={OV_PAD_LEFT} x2={OV_VB_W - OV_PAD_RIGHT}
+            y1={OV_BASELINE_Y} y2={OV_BASELINE_Y}
+          />
+        </svg>
+      </div>
+    </>
+  )}
+
   {hasSprints && (
     <div class="legend" aria-hidden="true">
       <span class="legend-item">
@@ -328,6 +491,10 @@ const yTickLabelX = PAD_LEFT - 4;
       <span class="legend-item">
         <span class="legend-glyph" aria-hidden="true">↑</span>
         overrun (&gt; {varianceFlagThreshold}× plan)
+      </span>
+      <span class="legend-item">
+        <span class="legend-glyph" aria-hidden="true">↑ NNN</span>
+        off-scale (&gt; median×2.5 cap)
       </span>
     </div>
   )}
@@ -441,6 +608,27 @@ const yTickLabelX = PAD_LEFT - 4;
     font-weight: 700;
   }
 
+  /* S112: off-scale glyph (actuals exceeding median×2.5 cap) */
+  .offscale-glyph {
+    fill: var(--danger);
+    font-family: var(--font-mono);
+    font-size: 7px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+  }
+
+  .cap-line {
+    stroke: var(--muted);
+    stroke-width: 0.75;
+    stroke-dasharray: 3 2;
+  }
+  .cap-label {
+    fill: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 7px;
+    letter-spacing: 0.04em;
+  }
+
   .empty-text {
     fill: var(--muted);
     font-family: var(--font-mono);
@@ -505,6 +693,36 @@ const yTickLabelX = PAD_LEFT - 4;
     font-style: italic;
   }
 
+  /* S113: overview strip + window indicator */
+  .window-caption {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--muted);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin: var(--space-3) 0 var(--space-1);
+  }
+  .overview-wrap {
+    position: relative;
+    height: 50px;
+    width: 100%;
+  }
+  .overview-svg { display: block; width: 100%; height: 100%; }
+  .ov-plan         { fill: var(--accent-dim); opacity: 0.5; }
+  .ov-actual       { fill: var(--accent); }
+  .ov-actual-overrun { fill: var(--danger); }
+  .ov-baseline {
+    stroke: var(--border);
+    stroke-width: 0.5;
+  }
+  .window-rect {
+    fill: var(--accent);
+    fill-opacity: 0.08;
+    stroke: var(--accent);
+    stroke-width: 1;
+    stroke-opacity: 0.5;
+  }
+
   @media (max-width: 640px) {
     .title { font-size: 10px; }
     .chart-wrap { height: 200px; }
@@ -512,5 +730,7 @@ const yTickLabelX = PAD_LEFT - 4;
     .head-meta { font-size: 9px; white-space: normal; }
     .legend { gap: var(--space-2) var(--space-3); font-size: 9px; }
     .chart-footer { font-size: 10px; }
+    .overview-wrap { height: 40px; }
+    .window-caption { font-size: 8px; }
   }
 </style>

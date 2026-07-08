@@ -4,9 +4,9 @@ Self-hosted CV + ops dashboard, built end-to-end by AI sub-agents — one kanban
 
 The point isn't the dashboard. It's the proof that an AI-assisted product build can be **measured and verified — to the token** — instead of just claimed.
 
-![AgenticOS public CV dashboard — 74M tokens, 111 agents, 144 skills, 14 MCP servers, model split, activity heatmap](assets/home-cv.png)
+![AgenticOS public CV dashboard — 100M+ tokens, 120 agents, 163 skills, 19 MCP servers, model split, activity heatmap](assets/home-cv.png)
 
-As of the latest snapshot: **74M tokens** metered · **111 agents** · **144 skills** · **14 MCP servers** · **19 projects** · **~€765 lifetime** on Claude (Max since 2026-03) · **148 of 171 stories** shipped across **71 one-hour sprints**. Every number is parsed from real `~/.claude/` run logs — nothing is typed in by hand.
+As of the latest snapshot: **100M+ tokens** metered (plus billions in cache reads) · **120 agents** · **163 skills** · **19 MCP servers** · **34 projects** · **~€856 lifetime** on Claude (Max since 2026-03) · **259 of 277 stories** shipped across **149 one-hour sprints**. Every number is parsed from real `~/.claude/` run logs — nothing is typed in by hand.
 
 ## The problem it solves
 
@@ -23,7 +23,7 @@ So this dashboard tracks spend across all four API dimensions — `input`, `outp
 | `/research/explorer` | public | Every research hypothesis, faceted by theme / state / weight-of-evidence, on an evidence × recency scatter |
 | `/research/tracker` | public | A CI-style board: what's **validated**, what's **watching** (and how close to promotion), what's **queued** |
 | `/research/garden` | public | The learnings as an RPG skill-tree — validating a hypothesis unlocks its dependents |
-| `/research/sprint-tokens` | public | Per-sprint token decomposition for all 71 sprints, with honest ±50% noise badges and a cap-model explainer |
+| `/research/sprint-tokens` | public | Per-sprint token decomposition for all 149 sprints, with honest ±50% noise badges and a cap-model explainer |
 | `/ops` | private | Cloudflare Access (Google SSO). Real project names, weekly-limit window, monthly spend, per-project cost |
 
 ![Research garden — the skill-tree of validated and in-progress learnings](assets/garden.png)
@@ -67,4 +67,4 @@ The implementation lives in a private repo. This public README documents the arc
 
 ---
 
-Built by [Marcin Kokott](https://linkedin.com/in/marcinkokott) — Head of Product & Delivery, Vazco.
+Built by [Marcin Kokott](https://linkedin.com/in/marcinkokott).

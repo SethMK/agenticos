@@ -1,70 +1,65 @@
 # AgenticOS
 
-Self-hosted CV + ops dashboard, built end-to-end by AI sub-agents — one kanban card at a time. Live at **[agenticos.sethsendom.com](https://agenticos.sethsendom.com)**.
+A self-hosted dashboard that measures the AI work that built it. Every page of
+[agenticos.sethsendom.com](https://agenticos.sethsendom.com) was written by AI coding agents
+pulling one kanban card at a time, directed by a product manager who writes no code by hand. The
+numbers on the site are that same work: tokens, projects, the agents and skills in operation, and
+a running subscription total, all parsed from real `~/.claude/` run logs rather than typed in.
 
-The point isn't the dashboard. It's the proof that an AI-assisted product build can be **measured and verified — to the token** — instead of just claimed.
+**100M+ metered tokens · 150+ one-hour sprints · 270+ stories.** Counts as of August 2026; the
+site itself is the current version.
 
-![AgenticOS public CV dashboard — 100M+ tokens, 120 agents, 163 skills, 19 MCP servers, model split, activity heatmap](assets/home-cv.png)
-
-As of the latest snapshot: **100M+ tokens** metered (plus billions in cache reads) · **120 agents** · **163 skills** · **19 MCP servers** · **34 projects** · **~€856 lifetime** on Claude (Max since 2026-03) · **259 of 277 stories** shipped across **149 one-hour sprints**. Every number is parsed from real `~/.claude/` run logs — nothing is typed in by hand.
+![The public dashboard: all-time tokens, subscription total, projects, skills, MCP servers, agents and work share](assets/home-dashboard.png)
 
 ## The problem it solves
 
-Claude Max bills through a `modelUsage` meter, and the meter misleads. An agent's self-reported tokens count only what's billed — real compute is dominated by `cache_read` volume, which runs 4–6× higher. The weekly quota shows a percentage dial with no token ceiling, so you can't tell when the window closes until it already has.
+Claude Max bills through a `modelUsage` meter, and the meter misleads. An agent's self-reported
+tokens count only what is billed, while real compute is dominated by `cache_read` volume running
+4–6× higher. The weekly quota shows a percentage dial with no token ceiling, so you cannot tell
+when the window closes until it already has.
 
-So this dashboard tracks spend across all four API dimensions — `input`, `output`, `cache_creation`, `cache_read` — and reads it through three accounting lenses: `modelUsage` velocity, real `$` cost, and quota-delta (remaining-capacity estimate). No single number tells the whole story; the three together do.
+So the dashboard tracks spend across all four API dimensions (`input`, `output`,
+`cache_creation`, `cache_read`) and reads it through three lenses: `modelUsage` velocity, real
+cost in euros, and a quota-delta estimate of remaining capacity. No single number tells the whole
+story; the three together do.
 
 ## Site map
 
-| Route | Access | What's there |
+| Route | Access | What is there |
 |---|---|---|
-| `/` | public | CV dashboard — tokens, projects, skills, agents, MCPs, cumulative spend, model split, activity heatmap |
-| `/how-it-was-built` | public | The build receipt — problem/solution, milestone kanban, every epic and story, sourced from the [agentic-os-pmo](https://github.com/SethMK/agentic-os-pmo) sister project |
-| `/research/explorer` | public | Every research hypothesis, faceted by theme / state / weight-of-evidence, on an evidence × recency scatter |
-| `/research/tracker` | public | A CI-style board: what's **validated**, what's **watching** (and how close to promotion), what's **queued** |
-| `/research/garden` | public | The learnings as an RPG skill-tree — validating a hypothesis unlocks its dependents |
-| `/research/sprint-tokens` | public | Per-sprint token decomposition for all 149 sprints, with honest ±50% noise badges and a cap-model explainer |
-| `/ops` | private | Cloudflare Access (Google SSO). Real project names, weekly-limit window, monthly spend, per-project cost |
+| `/` | public | The dashboard: tokens, projects, skills, agents, MCP servers, cumulative spend, model split, activity heatmap |
+| `/how-it-was-built` | public | The build receipt: problem and solution, milestone kanban, every epic and story, sourced from the [agentic-os-pmo](https://github.com/SethMK/agentic-os-pmo) sister repo |
+| `/research/explorer` | public | Every hypothesis, faceted by theme, state and weight of evidence, on an evidence-by-recency scatter |
+| `/research/tracker` | public | A board of what was adopted, what is under observation, what is queued, and what got rejected |
+| `/research/garden` | public | The findings as a skill tree, where validating one unlocks its dependents |
+| `/research/sprint-tokens` | public | Per-sprint token decomposition, with noise badges and a cap-model explainer |
+| `/ops` | private | Behind Cloudflare Access. Real project names, weekly-limit window, monthly spend, per-project cost |
 
-![Research garden — the skill-tree of validated and in-progress learnings](assets/garden.png)
+![The research tracker: plain-language findings with adopted, rejected and watching labels](assets/research-tracker.png)
 
-## How it's built
+## How it is built
 
-A single orchestrator runs the work one story at a time. It pulls one kanban card, dispatches an **implementer** sub-agent to write the code, then a **qa-verifier** sub-agent to check the acceptance bullets against a cold rebuild + Playwright. No parallel work-in-progress unless two cards provably touch disjoint files.
+One orchestrator runs the work a story at a time. It pulls a kanban card, sends an implementer
+sub-agent to write the code, then a separate verifier sub-agent to check the acceptance bullets
+against a cold rebuild and a browser test run. Nothing runs in parallel unless two cards
+provably touch different files. Sprint planning adds three voices: a scrum master watching
+capacity and tokens, a product owner watching acceptance and priority, and a chief scientist
+holding the measure-the-baseline-first rule.
 
-Each story carries an `owner` role — `orchestrator`, `data-pipeline`, `frontend`, `backend`, `infra-deploy`, `designer` — that tags what kind of work it is. Sprint ceremonies add three planning voices: a **Scrum Master** (capacity + token monitoring), a **Product Owner** (acceptance + priority), and a **Chief Scientist** (the baseline-first research method). Planning and methodology live in the sister repo.
-
-Story state machine: **Backlog → Ready → In Progress → Review → Done**.
+Stories move Backlog to Ready to In Progress to Review to Done. Planning and method live in the
+sister repo.
 
 ## Stack
 
-| Layer | Tech |
-|---|---|
-| Frontend | Astro (SSR) |
-| Runtime | Bun |
-| Auth | Cloudflare Tunnel + Cloudflare Access (Google SSO) |
-| Data pipeline | Mac-side walker scans `~/.claude/projects/` → 15-min snapshots → rsync to a Proxmox LXC |
-| Storage | JSON snapshots (history-accumulating) |
-
-## Calibration over story points
-
-Stories are sized by the **shape of their verification protocol**, not lines of code. A one-line CSS fix that still needs a cold rebuild + Playwright pass costs the same ~130k-token floor as a small feature with the same protocol. Every bucket below is re-derived from logged token + time runs:
-
-| Bucket | Typical scope |
-|---|---|
-| S-inline | Single-file edit, no QA pair |
-| S-with-QA | One-file fix + implementer / QA pair |
-| M-data | Pipeline step + attribution-coverage QA |
-| M-frontend | One component or surgical page edit + Playwright |
-| L-single | Hairy single component + Playwright |
-| Spike | Time-boxed research, no commit expected |
-
-Observed floor: **~130k tokens** for any cold-rebuild + Playwright story, regardless of edit size. Verification shape dominates code surface.
+Astro with server-side rendering on Bun, served from a Proxmox LXC through a Cloudflare Tunnel,
+with Cloudflare Access (Google SSO) gating `/ops`. A Mac-side pipeline scans `~/.claude/projects/`
+every fifteen minutes, writes snapshots, and rsyncs them across. Unit tests cover the pipeline
+and API; Playwright covers the pages.
 
 ## Code
 
-The implementation lives in a private repo. This public README documents the architecture, the live URL, and the methodology. Companion repo: **[agentic-os-pmo](https://github.com/SethMK/agentic-os-pmo)** — the planning workspace that drives the build.
-
----
+The implementation sits in a private repo. This public one carries the write-up, the live URL and
+the screens. Sister repo: [agentic-os-pmo](https://github.com/SethMK/agentic-os-pmo), the planning
+workspace that drove the build.
 
 Built by [Marcin Kokott](https://linkedin.com/in/marcinkokott).

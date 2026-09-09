@@ -6,7 +6,7 @@ pulling one kanban card at a time, directed by a product manager who writes no c
 numbers on the site are that same work: tokens, projects, the agents and skills in operation, and
 a running subscription total, all parsed from real `~/.claude/` run logs rather than typed in.
 
-**100M+ metered tokens · 150+ one-hour sprints · 270+ stories.** Counts as of August 2026; the
+**185M+ metered tokens · 150+ one-hour sprints · 275+ stories.** Counts as of September 2026; the
 site itself is the current version.
 
 ![The public dashboard: all-time tokens, subscription total, projects, skills, MCP servers, agents and work share](assets/home-dashboard.png)
